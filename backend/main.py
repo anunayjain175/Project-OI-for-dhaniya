@@ -234,10 +234,17 @@ def get_angel_history(symbol: str):
     if not all([client_id, password, totp_secret, api_key]):
         return {"status": "error", "message": "Angel One credentials not fully configured in settings."}
         
-    from backend.angel_connector import resolve_angel_token
     from datetime import datetime, timedelta
     
-    token = resolve_angel_token(symbol)
+    # Try getting from the connector's pre-resolved token map first (which is instant)
+    token = None
+    if connector and hasattr(connector, "symbol_token_map") and connector.symbol_token_map:
+        token = connector.symbol_token_map.get(symbol)
+        
+    if not token:
+        from backend.angel_connector import resolve_angel_token
+        token = resolve_angel_token(symbol)
+        
     if not token:
         return {"status": "error", "message": f"Could not resolve Angel One token for {symbol}"}
         
