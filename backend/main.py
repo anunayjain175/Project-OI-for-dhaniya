@@ -65,7 +65,7 @@ def shutdown_event():
         print("FastAPI: Stopped OdinConnector listener")
 
 # Endpoints
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD", "POST"])
 def health_check():
     return {"status": "healthy"}
 
