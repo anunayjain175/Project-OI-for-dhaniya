@@ -1,0 +1,138 @@
+{
+  "mode": "live",
+  "active_symbol": "DHANIYA AUG 26",
+  "active_token": "DHANIYA20AUG2026",
+  "active_segment": "7",
+  "eod_override": {},
+  "angel_client_id": "P52170454",
+  "angel_password": "1801",
+  "angel_totp_secret": "NO4WNHLHJWVTHF4BW3TM53WIEA",
+  "angel_api_key": "8q9TbOQI",
+  "futures_symbols": {
+    "DHANIYA JUN 26": {
+      "token": "DHANIYA19JUN2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:DHANIYAM2026"
+    },
+    "DHANIYA AUG 26": {
+      "token": "DHANIYA20AUG2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:DHANIYAN2026"
+    },
+    "DHANIYA OCT 26": {
+      "token": "DHANIYA19OCT2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:DHANIYAV2026"
+    },
+    "DHANIYA DEC 26": {
+      "token": "DHANIYA18DEC2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:DHANIYAZ2026"
+    },
+    "GUARGUM5 JUN 26": {
+      "token": "GUARGUM519JUN2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 JUL 26": {
+      "token": "GUARGUM520JUL2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 AUG 26": {
+      "token": "GUARGUM520AUG2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 SEP 26": {
+      "token": "GUARGUM518SEP2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 OCT 26": {
+      "token": "GUARGUM516OCT2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 NOV 26": {
+      "token": "GUARGUM520NOV2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "GUARGUM5 DEC 26": {
+      "token": "GUARGUM518DEC2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "JEERAMINI JUN 26": {
+      "token": "JEERAMINI19JUN2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAMINI JUL 26": {
+      "token": "JEERAMINI20JUL2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAMINI AUG 26": {
+      "token": "JEERAMINI20AUG2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAMINI SEP 26": {
+      "token": "JEERAMINI18SEP2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAMINI OCT 26": {
+      "token": "JEERAMINI19OCT2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAUNJHA JUN 26": {
+      "token": "JEERAUNJHA19JUN2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "JEERAUNJHA JUL 26": {
+      "token": "JEERAUNJHA20JUL2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "JEERAUNJHA AUG 26": {
+      "token": "JEERAUNJHA20AUG2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "JEERAUNJHA SEP 26": {
+      "token": "JEERAUNJHA18SEP2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "JEERAUNJHA OCT 26": {
+      "token": "JEERAUNJHA19OCT2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "TMCFGRNZM JUN 26": {
+      "token": "TMCFGRNZM19JUN2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:TMCFGRNZM1!"
+    },
+    "TMCFGRNZM AUG 26": {
+      "token": "TMCFGRNZM20AUG2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:TMCFGRNZM1!"
+    },
+    "TMCFGRNZM OCT 26": {
+      "token": "TMCFGRNZM16OCT2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:TMCFGRNZM1!"
+    },
+    "TMCFGRNZM DEC 26": {
+      "token": "TMCFGRNZM18DEC2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:TMCFGRNZM1!"
+    }
+  }
+}
