@@ -474,27 +474,23 @@ class AngelConnector:
             self.loop.close()
 
     async def _live_feed_wss_loop(self):
-        # 1. Login to generate tokens
-        try:
-            jwt_token = self.login()
-            feed_token = self.feed_token
-            client_id = self.get_setting("angel_client_id")
-            api_key = self.get_setting("angel_api_key")
-        except Exception as e:
-            print(f"AngelConnector: Login error in live feed: {e}")
-            return
-
-        # 2. Connect to WebSocket
-        wss_url = "wss://smartapisocket.angelone.in/smart-stream"
-        wss_headers = {
-            "Authorization": f"Bearer {jwt_token}",
-            "x-api-key": api_key,
-            "x-client-code": client_id,
-            "x-feed-token": feed_token
-        }
-        
         while self.running:
             try:
+                # 1. Login to generate fresh session tokens on every connection attempt
+                print("AngelConnector: Logging in to refresh SmartAPI session...")
+                jwt_token = self.login()
+                feed_token = self.feed_token
+                client_id = self.get_setting("angel_client_id")
+                api_key = self.get_setting("angel_api_key")
+                
+                wss_url = "wss://smartapisocket.angelone.in/smart-stream"
+                wss_headers = {
+                    "Authorization": f"Bearer {jwt_token}",
+                    "x-api-key": api_key,
+                    "x-client-code": client_id,
+                    "x-feed-token": feed_token
+                }
+                
                 print(f"AngelConnector: Connecting to SmartStream WebSocket...")
                 async with websockets.connect(wss_url, extra_headers=wss_headers) as ws:
                     self.websocket = ws
@@ -590,8 +586,8 @@ class AngelConnector:
                     ping_task.cancel()
                     
             except Exception as e:
-                print(f"AngelConnector: SmartStream error: {e}. Reconnecting in 5s...")
-                await asyncio.sleep(5.0)
+                print(f"AngelConnector: SmartStream error: {e}. Reconnecting in 10s...")
+                await asyncio.sleep(10.0)
 
     async def _heartbeat(self, ws):
         while self.running:
