@@ -278,8 +278,13 @@ def get_unified_history(symbol: str, connector):
     market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
     
-    # Filter real ticks to keep only those from the current session
+    # Filter real ticks into today's session and past sessions
     session_ticks = [t for t in real_ticks if t["time"] >= market_open_epoch]
+    past_ticks = [t for t in real_ticks if t["time"] < market_open_epoch]
+    
+    # Keep only the last 5 days of past ticks (5 * 24 * 3600 seconds)
+    five_days_ago = market_open_epoch - 5 * 24 * 3600
+    past_ticks = [t for t in past_ticks if t["time"] >= five_days_ago]
     
     # 3. Retrieve baseline information
     token = None
@@ -433,13 +438,30 @@ def get_unified_history(symbol: str, connector):
             vol = vol_next
             t += 60
         
-    unified = prefill_candles + session_ticks
+    unified = past_ticks + prefill_candles + session_ticks
     return unified
 
 def get_market_open_oi(symbol: str, connector):
     # Cache market open OI daily per symbol to avoid heavy DB/pre-fill queries on every live tick
-    from datetime import datetime
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    
+    if now_ist.weekday() == 5: # Saturday
+        target_date = now_ist - timedelta(days=1)
+    elif now_ist.weekday() == 6: # Sunday
+        target_date = now_ist - timedelta(days=2)
+    elif now_ist.hour < 10:
+        if now_ist.weekday() == 0: # Monday
+            target_date = now_ist - timedelta(days=3)
+        else:
+            target_date = now_ist - timedelta(days=1)
+    else:
+        target_date = now_ist
+        
+    market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
+    market_open_epoch = int(market_open.timestamp())
+    today_str = target_date.strftime("%Y-%m-%d")
     cache_key = f"{symbol}_{today_str}"
     
     global market_open_oi_cache
@@ -449,7 +471,13 @@ def get_market_open_oi(symbol: str, connector):
     try:
         history = get_unified_history(symbol, connector)
         if history:
-            val = history[0]["oi"]
+            val = None
+            for c in history:
+                if c["time"] >= market_open_epoch:
+                    val = c["oi"]
+                    break
+            if val is None:
+                val = history[0]["oi"]
             market_open_oi_cache[cache_key] = val
             return val
     except Exception as e:

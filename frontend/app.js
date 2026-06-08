@@ -652,7 +652,21 @@ async function loadOIHistory(symbol) {
             candlestickSeries.setData(priceData);
             
             const volumeData = oiList.map((c, i) => {
-                const diff = i > 0 ? (c.volume - oiList[i - 1].volume) : 0;
+                let diff = 0;
+                if (i > 0) {
+                    const prevD = new Date(oiList[i - 1].time * 1000);
+                    const currD = new Date(c.time * 1000);
+                    const isSameDay = prevD.getUTCFullYear() === currD.getUTCFullYear() &&
+                                      prevD.getUTCMonth() === currD.getUTCMonth() &&
+                                      prevD.getUTCDate() === currD.getUTCDate();
+                    if (!isSameDay) {
+                        diff = c.volume;
+                    } else {
+                        diff = c.volume - oiList[i - 1].volume;
+                    }
+                } else {
+                    diff = c.volume;
+                }
                 return {
                     time: c.time + offsetSeconds,
                     value: diff >= 0 ? diff : 0,
@@ -667,8 +681,13 @@ async function loadOIHistory(symbol) {
             }));
             oiSeries.setData(oiData);
             
-            startingOI = oiList[0].oi || 0;
-            yesterdayClose = oiList[0].open;
+            const now = new Date();
+            const todayOpenUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 4, 30, 0));
+            const todayOpenEpoch = Math.floor(todayOpenUTC.getTime() / 1000);
+            
+            let todayStartCandle = oiList.find(c => c.time >= todayOpenEpoch) || oiList[0];
+            startingOI = todayStartCandle.oi || 0;
+            yesterdayClose = todayStartCandle.open;
 
             // Sync active minute aggregation variables with the last historical candle
             const lastCandle = oiList[oiList.length - 1];
