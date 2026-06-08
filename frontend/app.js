@@ -460,7 +460,7 @@ function initPriceChart() {
         priceScaleId: '',
     });
     
-    priceChart.priceScale('').applyOptions({
+    volumeSeries.priceScale().applyOptions({
         scaleMargins: {
             top: 0.8,
             bottom: 0,
@@ -739,6 +739,7 @@ async function loadOIHistory(symbol) {
         }
         
         priceChart.timeScale().fitContent();
+        oiChart.timeScale().fitContent();
         setTimeout(() => {
             const range = priceChart.timeScale().getVisibleLogicalRange();
             if (range) {

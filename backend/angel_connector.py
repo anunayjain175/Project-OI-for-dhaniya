@@ -211,6 +211,7 @@ class AngelConnector:
         now = time.time()
         price = info["price"]
         oi = info["oi"]
+        cum_vol = info["volume"]
         history = []
         for i in range(150):
             timestamp = now - i * 60
@@ -219,13 +220,14 @@ class AngelConnector:
                 high_p = info["high"]
                 low_p = info["low"]
                 close_p = info["price"]
-                vol = info["volume"]
+                vol = cum_vol
             else:
                 open_p = price
                 close_p = price
                 high_p = price + max(0, random.normalvariate(0.3, 0.4))
                 low_p = price - max(0, random.normalvariate(0.3, 0.4))
-                vol = random.randint(1, 15)
+                cum_vol = max(0, cum_vol - random.randint(1, 15))
+                vol = cum_vol
                 
             history.append({
                 "time": timestamp,
