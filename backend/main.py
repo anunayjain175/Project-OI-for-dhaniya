@@ -148,6 +148,105 @@ async def post_config(new_config: dict):
         
     return res
 
+def generate_illiquid_prefill(start_price, target_price, high_price, low_price, start_oi, target_oi, total_volume, steps, rng):
+    if steps <= 0:
+        return []
+        
+    # 1. Determine active steps (about 25% of total steps, minimum 1 if steps > 0)
+    num_active = max(1, int(steps * 0.25))
+    if num_active > steps:
+        num_active = steps
+        
+    active_indices = sorted(rng.sample(range(steps), num_active))
+    
+    # 2. Distribute total volume among active steps
+    vol_steps = [0] * steps
+    if total_volume > 0 and num_active > 0:
+        cuts = sorted([rng.randint(0, total_volume) for _ in range(num_active - 1)])
+        cuts = [0] + cuts + [total_volume]
+        for idx, active_idx in enumerate(active_indices):
+            vol_steps[active_idx] = cuts[idx+1] - cuts[idx]
+            
+    # 3. Generate price path for the steps
+    active_prices = [start_price] * num_active
+    if num_active > 1:
+        if target_price > (high_price + low_price) / 2:
+            p1 = int(num_active * 0.3)
+            p2 = int(num_active * 0.7)
+            milestones = [(0, start_price), (p1, low_price), (p2, high_price), (num_active - 1, target_price)]
+        else:
+            p1 = int(num_active * 0.3)
+            p2 = int(num_active * 0.7)
+            milestones = [(0, start_price), (p1, high_price), (p2, low_price), (num_active - 1, target_price)]
+            
+        for idx in range(len(milestones) - 1):
+            s_step, s_val = milestones[idx]
+            e_step, e_val = milestones[idx+1]
+            span = e_step - s_step
+            if span > 0:
+                drift = (e_val - s_val) / span
+                for s in range(s_step + 1, e_step + 1):
+                    active_prices[s] = active_prices[s-1] + drift + rng.normalvariate(0, (high_price - low_price) * 0.05)
+                    
+        active_prices[0] = start_price
+        active_prices[-1] = target_price
+        for i in range(num_active):
+            active_prices[i] = max(low_price, min(high_price, active_prices[i]))
+            
+        curr_max = max(active_prices)
+        curr_min = min(active_prices)
+        active_prices[active_prices.index(curr_max)] = high_price
+        active_prices[active_prices.index(curr_min)] = low_price
+        
+    # 4. Generate OI path for active steps
+    oi_steps = [start_oi] * steps
+    if num_active > 0:
+        oi_drift = (target_oi - start_oi) / num_active
+        curr_oi = start_oi
+        for idx, active_idx in enumerate(active_indices):
+            curr_oi += oi_drift + rng.normalvariate(0, max(5, (target_oi - start_oi) * 0.02))
+            oi_steps[active_idx] = int(max(100, curr_oi))
+            
+    candles = []
+    current_price = start_price
+    current_cumulative_vol = 0
+    current_oi = start_oi
+    
+    active_ptr = 0
+    for s in range(steps):
+        is_active = (s in active_indices)
+        
+        if is_active and num_active > 0:
+            price_open = current_price
+            price_close = active_prices[active_ptr]
+            active_ptr += 1
+            
+            candle_high = max(price_open, price_close) + abs(rng.normalvariate(0, (high_price - low_price) * 0.03))
+            candle_low = min(price_open, price_close) - abs(rng.normalvariate(0, (high_price - low_price) * 0.03))
+            
+            candle_high = min(high_price, max(candle_high, price_open, price_close))
+            candle_low = max(low_price, min(candle_low, price_open, price_close))
+            
+            current_price = price_close
+            current_cumulative_vol += vol_steps[s]
+            current_oi = oi_steps[s]
+        else:
+            price_open = current_price
+            price_close = current_price
+            candle_high = current_price
+            candle_low = current_price
+            
+        candles.append({
+            "open": round(price_open, 2),
+            "high": round(candle_high, 2),
+            "low": round(candle_low, 2),
+            "close": round(price_close, 2),
+            "volume": int(current_cumulative_vol),
+            "oi": int(current_oi)
+        })
+        
+    return candles
+
 def get_unified_history(symbol: str, connector):
     from backend.database import get_history
     import time
@@ -267,42 +366,72 @@ def get_unified_history(symbol: str, connector):
     steps = max(0, duration_seconds // 60)
     
     prefill_candles = []
-    t = market_open_epoch
-    price = start_price
-    oi = start_oi
-    vol = 0
     
     rng = random.Random()
     rng.seed(hash(symbol) + market_open_epoch)
     
-    price_drift = (target_price - start_price) / steps if steps > 0 else 0
-    oi_drift = (target_oi - start_oi) / steps if steps > 0 else 0
-    vol_drift = target_vol / steps if steps > 0 else 0
-    
-    for i in range(steps):
-        price_change = price_drift + rng.normalvariate(0, price * 0.0001)
-        price_next = price + price_change
+    try:
+        high_price = baseline.get("high") or max(start_price, target_price)
+        low_price = baseline.get("low") or min(start_price, target_price)
+        # Avoid extreme high/low logic errors
+        if high_price < max(start_price, target_price):
+            high_price = max(start_price, target_price)
+        if low_price > min(start_price, target_price):
+            low_price = min(start_price, target_price)
+            
+        simulated = generate_illiquid_prefill(
+            start_price=start_price,
+            target_price=target_price,
+            high_price=high_price,
+            low_price=low_price,
+            start_oi=start_oi,
+            target_oi=target_oi,
+            total_volume=target_vol,
+            steps=steps,
+            rng=rng
+        )
+        for i, sc in enumerate(simulated):
+            prefill_candles.append({
+                "time": market_open_epoch + i * 60,
+                "open": sc["open"],
+                "high": sc["high"],
+                "low": sc["low"],
+                "close": sc["close"],
+                "oi": sc["oi"],
+                "volume": sc["volume"]
+            })
+    except Exception as sim_err:
+        print(f"Error running illiquid prefill simulation: {sim_err}")
+        # fallback simple drift
+        t = market_open_epoch
+        price = start_price
+        oi = start_oi
+        vol = 0
+        price_drift = (target_price - start_price) / steps if steps > 0 else 0
+        oi_drift = (target_oi - start_oi) / steps if steps > 0 else 0
+        vol_drift = target_vol / steps if steps > 0 else 0
         
-        oi_change = oi_drift + rng.normalvariate(0, max(1, oi * 0.0002))
-        oi_next = max(100, oi + oi_change)
-        
-        vol_change = vol_drift + rng.randint(0, 3)
-        vol_next = vol + vol_change
-        
-        prefill_candles.append({
-            "time": t,
-            "open": round(price, 2),
-            "high": round(max(price, price_next) + abs(rng.normalvariate(0, price * 0.0001)), 2),
-            "low": round(min(price, price_next) - abs(rng.normalvariate(0, price * 0.0001)), 2),
-            "close": round(price_next, 2),
-            "oi": int(oi_next),
-            "volume": int(vol_next)
-        })
-        
-        price = price_next
-        oi = oi_next
-        vol = vol_next
-        t += 60
+        for i in range(steps):
+            price_change = price_drift + rng.normalvariate(0, price * 0.0001)
+            price_next = price + price_change
+            oi_change = oi_drift + rng.normalvariate(0, max(1, oi * 0.0002))
+            oi_next = max(100, oi + oi_change)
+            vol_change = vol_drift + rng.randint(0, 3)
+            vol_next = vol + vol_change
+            
+            prefill_candles.append({
+                "time": t,
+                "open": round(price, 2),
+                "high": round(max(price, price_next) + abs(rng.normalvariate(0, price * 0.0001)), 2),
+                "low": round(min(price, price_next) - abs(rng.normalvariate(0, price * 0.0001)), 2),
+                "close": round(price_next, 2),
+                "oi": int(oi_next),
+                "volume": int(vol_next)
+            })
+            price = price_next
+            oi = oi_next
+            vol = vol_next
+            t += 60
         
     unified = prefill_candles + session_ticks
     return unified
