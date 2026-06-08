@@ -189,11 +189,22 @@ class AngelConnector:
             print(f"AngelConnector: Error loading config.json: {e}")
 
     def save_config(self, new_settings):
-        self.settings.update(new_settings)
+        new_settings_copy = new_settings.copy()
+        open_oi = new_settings_copy.pop("open_oi", None)
+        
+        self.settings.update(new_settings_copy)
         sym = self.settings.get("active_symbol")
         if "futures_symbols" in self.settings and sym in self.settings["futures_symbols"]:
             self.settings["active_token"] = self.settings["futures_symbols"][sym]["token"]
             self.settings["active_segment"] = self.settings["futures_symbols"][sym]["segment"]
+            if open_oi is not None:
+                try:
+                    if str(open_oi).strip():
+                        self.settings["futures_symbols"][sym]["open_oi"] = int(open_oi)
+                    else:
+                        self.settings["futures_symbols"][sym].pop("open_oi", None)
+                except:
+                    pass
             
         try:
             with open("backend/config.json", "w") as f:

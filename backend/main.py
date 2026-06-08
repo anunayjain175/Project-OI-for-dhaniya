@@ -347,6 +347,10 @@ def get_unified_history(symbol: str, connector):
     start_price = baseline.get("open") or baseline.get("price") or 12000.0
     start_oi = baseline.get("oi") or 10000
     
+    user_open_oi = None
+    if connector and "futures_symbols" in connector.settings and symbol in connector.settings["futures_symbols"]:
+        user_open_oi = connector.settings["futures_symbols"][symbol].get("open_oi")
+
     if session_ticks:
         target_price = session_ticks[0]["open"]
         target_oi = session_ticks[0]["oi"]
@@ -373,11 +377,12 @@ def get_unified_history(symbol: str, connector):
         except Exception as e:
             print(f"Error getting yesterday closing OI for prefill: {e}")
             
-        start_oi = yest_oi if yest_oi is not None else target_oi
+        start_oi = int(user_open_oi) if user_open_oi is not None else (yest_oi if yest_oi is not None else target_oi)
     else:
         target_price = baseline.get("price") or start_price
         target_oi = baseline.get("oi") or start_oi
         target_vol = baseline.get("volume") or 100
+        start_oi = int(user_open_oi) if user_open_oi is not None else target_oi
         
     # 4. Generate pre-fill ticks
     # We want to fill from market_open_epoch up to the first session tick, or the current time/market close if no ticks exist.
@@ -464,6 +469,15 @@ def get_unified_history(symbol: str, connector):
     return unified
 
 def get_market_open_oi(symbol: str, connector):
+    # 1. Priority: User-configured opening OI baseline from settings
+    if connector and "futures_symbols" in connector.settings and symbol in connector.settings["futures_symbols"]:
+        open_oi = connector.settings["futures_symbols"][symbol].get("open_oi")
+        if open_oi:
+            try:
+                return int(open_oi)
+            except:
+                pass
+
     # Cache market open OI daily per symbol to avoid heavy DB/pre-fill queries on every live tick
     from datetime import datetime, timezone, timedelta
     IST = timezone(timedelta(hours=5, minutes=30))

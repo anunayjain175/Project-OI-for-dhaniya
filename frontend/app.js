@@ -208,6 +208,9 @@ function setupEventListeners() {
         document.getElementById("active_segment").value = config.active_segment || "7";
         modeSelect.value = config.mode || "mock";
         
+        const activeSymInfo = (config.futures_symbols && config.futures_symbols[currentSymbol]) || {};
+        document.getElementById("open_oi").value = activeSymInfo.open_oi || "";
+        
         toggleLiveFields(modeSelect.value);
         settingsModal.style.display = "block";
     });
