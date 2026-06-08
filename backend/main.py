@@ -32,9 +32,19 @@ active_websockets: Set[WebSocket] = set()
 connector = None
 main_loop = None
 
+market_open_oi_cache = {}
+
 def broadcast_tick(tick_data):
     global main_loop
     if active_websockets and main_loop:
+        # Inject market_open_oi to live ticks so the UI always has the correct baseline
+        symbol = tick_data.get("symbol")
+        if symbol:
+            try:
+                tick_data["market_open_oi"] = get_market_open_oi(symbol, connector)
+            except Exception as e:
+                print(f"Error injecting market_open_oi to tick: {e}")
+                
         message = json.dumps(tick_data)
         for ws in list(active_websockets):
             try:
@@ -177,6 +187,13 @@ def get_unified_history(symbol: str, connector):
     if connector and "futures_symbols" in connector.settings and symbol in connector.settings["futures_symbols"]:
         token = connector.settings["futures_symbols"][symbol]["token"]
         
+    # Attempt to fetch a fresh quote from REST API to ensure baseline is 100% accurate
+    if token and connector and hasattr(connector, "update_market_data_from_quote"):
+        try:
+            connector.update_market_data_from_quote(symbol, token)
+        except Exception as e:
+            print(f"Error fetching fresh quote for baseline: {e}")
+            
     baseline = None
     if token and connector:
         # Default fallback baseline from baselines or mock_history
@@ -230,6 +247,7 @@ def get_unified_history(symbol: str, connector):
         target_price = session_ticks[0]["open"]
         target_oi = session_ticks[0]["oi"]
         target_vol = session_ticks[0]["volume"]
+        start_oi = target_oi  # Keep it flat at the real open value
     else:
         target_price = baseline.get("price") or start_price
         target_oi = baseline.get("oi") or start_oi
@@ -290,10 +308,21 @@ def get_unified_history(symbol: str, connector):
     return unified
 
 def get_market_open_oi(symbol: str, connector):
+    # Cache market open OI daily per symbol to avoid heavy DB/pre-fill queries on every live tick
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"{symbol}_{today_str}"
+    
+    global market_open_oi_cache
+    if cache_key in market_open_oi_cache:
+        return market_open_oi_cache[cache_key]
+        
     try:
         history = get_unified_history(symbol, connector)
         if history:
-            return history[0]["oi"]
+            val = history[0]["oi"]
+            market_open_oi_cache[cache_key] = val
+            return val
     except Exception as e:
         print(f"Error getting market open OI: {e}")
     return 0

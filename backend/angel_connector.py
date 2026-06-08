@@ -336,6 +336,93 @@ class AngelConnector:
             
         return res
 
+    def fetch_market_quote(self, exchange: str, symbol_token: str):
+        try:
+            if not hasattr(self, "jwt_token") or not self.jwt_token:
+                self.login()
+                
+            client_id = self.get_setting("angel_client_id")
+            api_key = self.get_setting("angel_api_key")
+            
+            url = "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote"
+            headers = {
+                "Content-Type": "application/json",
+                "X-ClientLocalIP": "127.0.0.1",
+                "X-ClientPublicIP": "127.0.0.1",
+                "X-MACAddress": "00:00:00:00:00:00",
+                "Accept": "application/json",
+                "X-PrivateKey": api_key,
+                "X-UserType": "USER",
+                "X-SourceID": "WEB",
+                "Authorization": f"Bearer {self.jwt_token}"
+            }
+            
+            payload = {
+                "mode": "FULL",
+                "exchangeTokens": {
+                    exchange: [symbol_token]
+                }
+            }
+            
+            r = requests.post(url, json=payload, headers=headers, timeout=5)
+            res = r.json()
+            if res.get("status") is True and "data" in res and "fetched" in res["data"] and res["data"]["fetched"]:
+                item = res["data"]["fetched"][0]
+                return item
+        except Exception as e:
+            print(f"AngelConnector: Error fetching market quote: {e}")
+        return None
+
+    def update_market_data_from_quote(self, symbol, token):
+        # Only fetch if we are in live mode and credentials exist
+        if self.settings.get("mode") != "live":
+            return None
+            
+        client_id = self.get_setting("angel_client_id")
+        password = self.get_setting("angel_password")
+        totp_secret = self.get_setting("angel_totp_secret")
+        api_key = self.get_setting("angel_api_key")
+        if not all([client_id, password, totp_secret, api_key]):
+            return None
+            
+        # Avoid rate-limiting by caching quote for 30 seconds
+        now = time.time()
+        cache_key = f"quote_time_{token}"
+        if hasattr(self, cache_key) and now - getattr(self, cache_key) < 30.0:
+            return self.market_data.get(token)
+            
+        item = self.fetch_market_quote("NCDEX", token)
+        if item:
+            ltp = item.get("ltp", 0.0)
+            open_val = item.get("open", ltp)
+            high = item.get("high", ltp)
+            low = item.get("low", ltp)
+            close = item.get("close", ltp)
+            volume = item.get("tradeVolume", 0)
+            oi = item.get("opnInterest", 0)
+            
+            dash_tick = {
+                "token": token,
+                "symbol": symbol,
+                "type": "FUT",
+                "price": ltp,
+                "change": round(ltp - close, 2),
+                "volume": volume,
+                "oi": oi,
+                "time": now,
+                "ohlc": {
+                    "open": open_val,
+                    "high": high,
+                    "low": low,
+                    "close": ltp,
+                    "yesterday_close": close
+                }
+            }
+            self.market_data[token] = dash_tick
+            setattr(self, cache_key, now)
+            return dash_tick
+        return None
+
     def resolve_all_angel_tokens(self):
         """
         Resolves tokens for all symbols configured in self.settings['futures_symbols'].

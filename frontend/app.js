@@ -131,10 +131,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 1. Fetch config settings
     await fetchConfig();
+    if (chartSymbolNameEl && currentSymbol) {
+        chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
+    }
     
     // 2. Initialize Lightweight Price Chart & OI Chart
     initPriceChart();
     initOIChart();
+    setupChartSynchronization();
     
     // 3. Setup Events
     setupEventListeners();
@@ -474,28 +478,55 @@ function initPriceChart() {
     setupChartSynchronization();
 }
 
+// Global synchronization handlers to prevent memory leaks and duplicate subscriptions
+let priceLogicalRangeChangeHandler = null;
+let oiLogicalRangeChangeHandler = null;
+let priceCrosshairMoveHandler = null;
+let oiCrosshairMoveHandler = null;
+
 function setupChartSynchronization() {
     if (!priceChart || !oiChart) return;
 
+    // Unsubscribe previous handlers if they exist to prevent memory leaks and multiple triggers
+    if (priceLogicalRangeChangeHandler) {
+        try {
+            priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(priceLogicalRangeChangeHandler);
+        } catch(e) {}
+    }
+    if (oiLogicalRangeChangeHandler) {
+        try {
+            oiChart.timeScale().unsubscribeVisibleLogicalRangeChange(oiLogicalRangeChangeHandler);
+        } catch(e) {}
+    }
+    if (priceCrosshairMoveHandler) {
+        try {
+            priceChart.unsubscribeCrosshairMove(priceCrosshairMoveHandler);
+        } catch(e) {}
+    }
+    if (oiCrosshairMoveHandler) {
+        try {
+            oiChart.unsubscribeCrosshairMove(oiCrosshairMoveHandler);
+        } catch(e) {}
+    }
+
     let isSyncing = false;
 
-    // Sync time scale zoom/scroll
-    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (isSyncing) return;
+    // Define new handlers
+    priceLogicalRangeChangeHandler = (range) => {
+        if (isSyncing || !range) return;
         isSyncing = true;
         oiChart.timeScale().setVisibleLogicalRange(range);
         isSyncing = false;
-    });
+    };
 
-    oiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (isSyncing) return;
+    oiLogicalRangeChangeHandler = (range) => {
+        if (isSyncing || !range) return;
         isSyncing = true;
         priceChart.timeScale().setVisibleLogicalRange(range);
         isSyncing = false;
-    });
+    };
 
-    // Sync crosshair vertical line
-    priceChart.subscribeCrosshairMove(param => {
+    priceCrosshairMoveHandler = (param) => {
         if (isSyncing) return;
         isSyncing = true;
         if (param.time) {
@@ -504,9 +535,9 @@ function setupChartSynchronization() {
             oiChart.clearCrosshairPosition();
         }
         isSyncing = false;
-    });
+    };
 
-    oiChart.subscribeCrosshairMove(param => {
+    oiCrosshairMoveHandler = (param) => {
         if (isSyncing) return;
         isSyncing = true;
         if (param.time) {
@@ -515,7 +546,13 @@ function setupChartSynchronization() {
             priceChart.clearCrosshairPosition();
         }
         isSyncing = false;
-    });
+    };
+
+    // Subscribe
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(priceLogicalRangeChangeHandler);
+    oiChart.timeScale().subscribeVisibleLogicalRangeChange(oiLogicalRangeChangeHandler);
+    priceChart.subscribeCrosshairMove(priceCrosshairMoveHandler);
+    oiChart.subscribeCrosshairMove(oiCrosshairMoveHandler);
 }
 
 // Initialize Open Interest chart under TradingView pane
