@@ -148,8 +148,8 @@ def get_unified_history(symbol: str, connector):
     real_ticks = get_history(symbol) # sorted by time ASC
     
     # 2. Get market open timestamp in IST
-    # NCDEX session is Monday to Friday, starts at 09:00 AM IST.
-    # If the current time is before 09:00 AM IST, the current session is the previous trading day.
+    # NCDEX session is Monday to Friday, starts at 10:00 AM IST.
+    # If the current time is before 10:00 AM IST, the current session is the previous trading day.
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     
@@ -157,7 +157,7 @@ def get_unified_history(symbol: str, connector):
         target_date = now_ist - timedelta(days=1)
     elif now_ist.weekday() == 6: # Sunday
         target_date = now_ist - timedelta(days=2)
-    elif now_ist.hour < 9:
+    elif now_ist.hour < 10:
         # Market not open yet today. Use previous trading day (Friday if Monday)
         if now_ist.weekday() == 0: # Monday
             target_date = now_ist - timedelta(days=3)
@@ -166,7 +166,7 @@ def get_unified_history(symbol: str, connector):
     else:
         target_date = now_ist
         
-    market_open = target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
     
     # Filter real ticks to keep only those from the current session
@@ -420,7 +420,7 @@ def get_angel_history(symbol: str):
         
     # Fetch data for the last 5 days
     to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-    from_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d 09:15")
+    from_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d 10:00")
     
     try:
         res = connector.fetch_historical_candles("NCDEX", token, "ONE_MINUTE", from_date, to_date)
@@ -434,16 +434,16 @@ def get_market_status():
     from datetime import datetime, timezone, timedelta
     IST = timezone(timedelta(hours=5, minutes=30))
     now = datetime.now(IST)
-    # NCDEX: Mon-Fri, 09:00 - 17:00 IST
+    # NCDEX: Mon-Fri, 10:00 - 17:00 IST
     is_weekday = now.weekday() < 5
-    market_open_time  = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
+    market_open_time  = now.replace(hour=10, minute=0,  second=0, microsecond=0)
     market_close_time = now.replace(hour=17, minute=0,  second=0, microsecond=0)
     is_open = is_weekday and market_open_time <= now <= market_close_time
     return {
         "market_open": is_open,
         "current_time_ist": now.strftime("%H:%M:%S"),
         "exchange": "NCDEX",
-        "session": "09:00 - 17:00 IST"
+        "session": "10:00 - 17:00 IST"
     }
 
 @app.post("/api/set-closing-data")
