@@ -33,6 +33,10 @@ let socket = null;
 let currentSymbol = "JEERA-FUT";
 let config = {};
 
+// Cached unified data for chart legend lookup
+let currentHistoryData = [];
+let isCrosshairActive = false;
+
 // Charts Instances
 let priceChart = null;
 let oiChart = null;
@@ -534,8 +538,12 @@ function setupChartSynchronization() {
         isSyncing = true;
         if (param.time) {
             oiChart.setCrosshairPosition(0, param.time, oiSeries);
+            isCrosshairActive = true;
+            updateLegendValues(param);
         } else {
             oiChart.clearCrosshairPosition();
+            isCrosshairActive = false;
+            clearLegendValues();
         }
         isSyncing = false;
     };
@@ -545,8 +553,12 @@ function setupChartSynchronization() {
         isSyncing = true;
         if (param.time) {
             priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
+            isCrosshairActive = true;
+            updateLegendValues(param);
         } else {
             priceChart.clearCrosshairPosition();
+            isCrosshairActive = false;
+            clearLegendValues();
         }
         isSyncing = false;
     };
@@ -701,6 +713,34 @@ async function loadOIHistory(symbol) {
             activeMinuteClose = lastCandle.close;
             activeMinuteVolumeStart = lastCandle.volume || 0;
             activeMinuteVolume = 0;
+
+            // Save mapped data for chart legend lookup
+            currentHistoryData = oiList.map((c, i) => {
+                let diff = 0;
+                if (i > 0) {
+                    const prevD = new Date(oiList[i - 1].time * 1000);
+                    const currD = new Date(c.time * 1000);
+                    const isSameDay = prevD.getUTCFullYear() === currD.getUTCFullYear() &&
+                                      prevD.getUTCMonth() === currD.getUTCMonth() &&
+                                      prevD.getUTCDate() === currD.getUTCDate();
+                    if (!isSameDay) {
+                        diff = c.volume;
+                    } else {
+                        diff = c.volume - oiList[i - 1].volume;
+                    }
+                } else {
+                    diff = c.volume;
+                }
+                return {
+                    time: c.time + offsetSeconds,
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close,
+                    volume: diff >= 0 ? diff : 0,
+                    oi: c.oi || 0
+                };
+            });
         } else {
             // Database is empty (e.g. first run). Fall back to simulated baseline history
             console.log("Database history is empty. Generating simulated historical data points for timeline...");
@@ -752,11 +792,26 @@ async function loadOIHistory(symbol) {
                 activeMinuteClose = lastCandle.close;
                 activeMinuteVolumeStart = lastCandle.volume || 0;
                 activeMinuteVolume = 0;
+
+                // Save mapped simulated data for chart legend lookup
+                currentHistoryData = candlesList.map((c, idx) => {
+                    const diff = idx > 0 ? (c.volume - candlesList[idx - 1].volume) : 0;
+                    return {
+                        time: c.time + offsetSeconds,
+                        open: c.open,
+                        high: c.high,
+                        low: c.low,
+                        close: c.close,
+                        volume: diff >= 0 ? diff : 0,
+                        oi: oiData[idx].value
+                    };
+                });
             } else {
                 candlestickSeries.setData([]);
                 volumeSeries.setData([]);
                 oiSeries.setData([]);
                 startingOI = null;
+                currentHistoryData = [];
             }
         }
         
@@ -769,6 +824,7 @@ async function loadOIHistory(symbol) {
             }
         }, 50);
         
+        clearLegendValues();
     } catch (err) {
         console.error("Error loading history:", err);
     }
@@ -862,6 +918,32 @@ function handleLiveTick(tick) {
         // Store current values
         lastOITick = tick.oi;
         lastPriceTick = tick.price;
+
+        // Update currentHistoryData cache for legend lookup
+        let dataPoint = currentHistoryData.find(d => d.time === activeMinuteTime);
+        if (dataPoint) {
+            dataPoint.open = activeMinuteOpen;
+            dataPoint.high = activeMinuteHigh;
+            dataPoint.low = activeMinuteLow;
+            dataPoint.close = activeMinuteClose;
+            dataPoint.volume = activeMinuteVolume;
+            dataPoint.oi = tick.oi;
+        } else {
+            currentHistoryData.push({
+                time: activeMinuteTime,
+                open: activeMinuteOpen,
+                high: activeMinuteHigh,
+                low: activeMinuteLow,
+                close: activeMinuteClose,
+                volume: activeMinuteVolume,
+                oi: tick.oi
+            });
+        }
+
+        // If crosshair is not active, keep legend updated to show the latest live tick info
+        if (!isCrosshairActive) {
+            clearLegendValues();
+        }
         
         // Update UI panels with stats
         updateUIPanels(tick);
@@ -984,4 +1066,57 @@ function formatNumber(num) {
     }
     
     return (isNegative ? "-" : "") + formatted;
+}
+
+// Update Legend element texts
+function updateLegendValues(param) {
+    if (!param || !param.time) return;
+    
+    // Find matching candle in currentHistoryData
+    const dataPoint = currentHistoryData.find(d => d.time === param.time);
+    if (dataPoint) {
+        document.getElementById("legend-open").innerText = dataPoint.open !== undefined ? dataPoint.open.toFixed(2) : "-";
+        document.getElementById("legend-high").innerText = dataPoint.high !== undefined ? dataPoint.high.toFixed(2) : "-";
+        document.getElementById("legend-low").innerText = dataPoint.low !== undefined ? dataPoint.low.toFixed(2) : "-";
+        document.getElementById("legend-close").innerText = dataPoint.close !== undefined ? dataPoint.close.toFixed(2) : "-";
+        document.getElementById("legend-volume").innerText = dataPoint.volume !== undefined ? dataPoint.volume : "0";
+        document.getElementById("legend-oi").innerText = dataPoint.oi !== undefined ? dataPoint.oi : "-";
+    } else if (param.seriesData) {
+        // Try to get data directly from the series price values if we can't find it in cache
+        const price = param.seriesData.get(candlestickSeries);
+        const volume = param.seriesData.get(volumeSeries);
+        const oi = param.seriesData.get(oiSeries);
+        
+        if (price) {
+            document.getElementById("legend-open").innerText = price.open !== undefined ? price.open.toFixed(2) : "-";
+            document.getElementById("legend-high").innerText = price.high !== undefined ? price.high.toFixed(2) : "-";
+            document.getElementById("legend-low").innerText = price.low !== undefined ? price.low.toFixed(2) : "-";
+            document.getElementById("legend-close").innerText = price.close !== undefined ? price.close.toFixed(2) : "-";
+        }
+        if (volume) {
+            document.getElementById("legend-volume").innerText = volume.value !== undefined ? volume.value : "0";
+        }
+        if (oi) {
+            document.getElementById("legend-oi").innerText = oi.value !== undefined ? oi.value : "-";
+        }
+    }
+}
+
+function clearLegendValues() {
+    if (currentHistoryData && currentHistoryData.length > 0) {
+        const lastCandle = currentHistoryData[currentHistoryData.length - 1];
+        document.getElementById("legend-open").innerText = lastCandle.open !== undefined ? lastCandle.open.toFixed(2) : "-";
+        document.getElementById("legend-high").innerText = lastCandle.high !== undefined ? lastCandle.high.toFixed(2) : "-";
+        document.getElementById("legend-low").innerText = lastCandle.low !== undefined ? lastCandle.low.toFixed(2) : "-";
+        document.getElementById("legend-close").innerText = lastCandle.close !== undefined ? lastCandle.close.toFixed(2) : "-";
+        document.getElementById("legend-volume").innerText = lastCandle.volume !== undefined ? lastCandle.volume : "0";
+        document.getElementById("legend-oi").innerText = lastCandle.oi !== undefined ? lastCandle.oi : "-";
+    } else {
+        document.getElementById("legend-open").innerText = "-";
+        document.getElementById("legend-high").innerText = "-";
+        document.getElementById("legend-low").innerText = "-";
+        document.getElementById("legend-close").innerText = "-";
+        document.getElementById("legend-volume").innerText = "-";
+        document.getElementById("legend-oi").innerText = "-";
+    }
 }
