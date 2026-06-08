@@ -631,7 +631,7 @@ async function loadOIHistory(symbol) {
         // 1. Fetch real historical data from local/cloud database
         let oiList = [];
         try {
-            const oiRes = await fetch(`/api/historical-oi?symbol=${symbol}`);
+            const oiRes = await fetch(`/api/historical-oi?symbol=${symbol}&_=${Date.now()}`);
             oiList = await oiRes.json();
         } catch (err) {
             console.error("Error loading historical OI from DB:", err);
@@ -684,7 +684,7 @@ async function loadOIHistory(symbol) {
             console.log("Database history is empty. Generating simulated historical data points for timeline...");
             
             let candlesList = [];
-            const res = await fetch(`/api/historical-candles?symbol=${symbol}`);
+            const res = await fetch(`/api/historical-candles?symbol=${symbol}&_=${Date.now()}`);
             candlesList = await res.json();
             
             if (candlesList.length > 0) {
@@ -849,7 +849,7 @@ function handleLiveTick(tick) {
 // Regular stats fetch (backup polling)
 async function fetchStatsData() {
     try {
-        const res = await fetch("/api/futures-data");
+        const res = await fetch(`/api/futures-data?_=${Date.now()}`);
         const stats = await res.json();
         
         if (stats && stats.price > 0) {

@@ -456,6 +456,13 @@ def get_market_open_oi(symbol: str, connector):
         print(f"Error getting market open OI: {e}")
     return 0
 
+def make_nocache_response(content):
+    response = JSONResponse(content=content)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 @app.get("/api/futures-data")
 def get_futures_data():
     global connector
@@ -463,13 +470,13 @@ def get_futures_data():
     symbol = connector.settings["active_symbol"]
     market_open_oi = get_market_open_oi(symbol, connector)
 
-    # If in mock mode, get current tick from simulated loop
+    res_data = None
     if connector.settings["mode"] == "mock":
         hist = connector.mock_history.get(token, [])
         if hist:
             last = hist[-1]
             yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
-            return {
+            res_data = {
                 "symbol": symbol,
                 "token": token,
                 "price": last["close"],
@@ -485,60 +492,55 @@ def get_futures_data():
                 }
             }
 
-    # LIVE MODE —————————————————————————————————————————
-
-    # 1. Priority: EOD override (real data entered from broker by user)
-    eod = connector.settings.get("eod_override", {}).get(token)
-    if eod:
-        res = eod.copy()
-        res["market_open_oi"] = market_open_oi
-        return res
-
-    # 2. Live ticks received during market hours
-    m_data = connector.market_data.get(token)
-    if m_data:
-        res = m_data.copy()
-        res["market_open_oi"] = market_open_oi
-        return res
-
-    # 3. Fallback: baseline data so dashboard never shows zeroes
-    hist = connector.mock_history.get(token, [])
-    if not hist:
-        connector.get_historical_candles(symbol)
-        hist = connector.mock_history.get(token, [])
-
-    if hist:
-        last = hist[-1]
-        yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
-        return {
-            "symbol": symbol,
-            "token": token,
-            "price": last["close"],
-            "oi": last["oi"],
-            "volume": last["volume"],
-            "market_open_oi": market_open_oi,
-            "ohlc": {
-                "open": last["open"],
-                "high": last["high"],
-                "low": last["low"],
-                "close": last["close"],
-                "yesterday_close": yest_close
-            }
-        }
-
-    return {
-        "symbol": symbol,
-        "token": token,
-        "price": 0.0, "oi": 0, "volume": 0,
-        "market_open_oi": market_open_oi,
-        "ohlc": {"open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0, "yesterday_close": 0.0}
-    }
+    if not res_data:
+        eod = connector.settings.get("eod_override", {}).get(token)
+        if eod:
+            res_data = eod.copy()
+            res_data["market_open_oi"] = market_open_oi
+        else:
+            m_data = connector.market_data.get(token)
+            if m_data:
+                res_data = m_data.copy()
+                res_data["market_open_oi"] = market_open_oi
+            else:
+                hist = connector.mock_history.get(token, [])
+                if not hist:
+                    connector.get_historical_candles(symbol)
+                    hist = connector.mock_history.get(token, [])
+                if hist:
+                    last = hist[-1]
+                    yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
+                    res_data = {
+                        "symbol": symbol,
+                        "token": token,
+                        "price": last["close"],
+                        "oi": last["oi"],
+                        "volume": last["volume"],
+                        "market_open_oi": market_open_oi,
+                        "ohlc": {
+                            "open": last["open"],
+                            "high": last["high"],
+                            "low": last["low"],
+                            "close": last["close"],
+                            "yesterday_close": yest_close
+                        }
+                    }
+                else:
+                    res_data = {
+                        "symbol": symbol,
+                        "token": token,
+                        "price": 0.0, "oi": 0, "volume": 0,
+                        "market_open_oi": market_open_oi,
+                        "ohlc": {"open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0, "yesterday_close": 0.0}
+                    }
+    return make_nocache_response(res_data)
 
 @app.get("/api/historical-candles")
 def get_historical_candles(symbol: str):
     global connector
     try:
-        return connector.get_historical_candles(symbol)
+        data = connector.get_historical_candles(symbol)
+        return make_nocache_response(data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -546,7 +548,8 @@ def get_historical_candles(symbol: str):
 def get_historical_oi(symbol: str):
     global connector
     try:
-        return get_unified_history(symbol, connector)
+        data = get_unified_history(symbol, connector)
+        return make_nocache_response(data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
