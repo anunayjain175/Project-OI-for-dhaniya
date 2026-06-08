@@ -99,20 +99,6 @@ class AngelConnector:
         }
         self.load_config()
 
-    def get_setting(self, key):
-        env_map = {
-            "angel_client_id": "ANGEL_CLIENT_ID",
-            "angel_password": "ANGEL_PASSWORD",
-            "angel_totp_secret": "ANGEL_TOTP_SECRET",
-            "angel_api_key": "ANGEL_API_KEY",
-            "mode": "MODE"
-        }
-        env_var = env_map.get(key)
-        if env_var and env_var in os.environ:
-            return os.environ[env_var]
-        return self.settings.get(key)
-
-        
         # Mock baseline
         self.baselines = {
             "DHANIYA19JUN2026": {
@@ -181,6 +167,19 @@ class AngelConnector:
         }
         self.mock_history = {}
         self.init_mock_history()
+
+    def get_setting(self, key):
+        env_map = {
+            "angel_client_id": "ANGEL_CLIENT_ID",
+            "angel_password": "ANGEL_PASSWORD",
+            "angel_totp_secret": "ANGEL_TOTP_SECRET",
+            "angel_api_key": "ANGEL_API_KEY",
+            "mode": "MODE"
+        }
+        env_var = env_map.get(key)
+        if env_var and env_var in os.environ:
+            return os.environ[env_var]
+        return self.settings.get(key)
 
     def load_config(self):
         try:
