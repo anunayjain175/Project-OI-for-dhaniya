@@ -388,7 +388,29 @@ function initPriceChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
+            tickMarkFormatter: (time, tickMarkType, locale) => {
+                const date = new Date(time * 1000);
+                if (tickMarkType < 3) {
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    return `${day}/${month}`;
+                } else {
+                    const hours = String(date.getHours()).padStart(2, '0');
+                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    return `${hours}:${minutes}`;
+                }
+            }
         },
+        localization: {
+            timeFormatter: (time) => {
+                const date = new Date(time * 1000);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                return `${day}/${month} ${hours}:${minutes}`;
+            }
+        }
     };
 
     priceChart = LightweightCharts.createChart(priceContainer, {
@@ -498,7 +520,29 @@ function initOIChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
+            tickMarkFormatter: (time, tickMarkType, locale) => {
+                const date = new Date(time * 1000);
+                if (tickMarkType < 3) {
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    return `${day}/${month}`;
+                } else {
+                    const hours = String(date.getHours()).padStart(2, '0');
+                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    return `${hours}:${minutes}`;
+                }
+            }
         },
+        localization: {
+            timeFormatter: (time) => {
+                const date = new Date(time * 1000);
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                return `${day}/${month} ${hours}:${minutes}`;
+            }
+        }
     };
 
     oiChart = LightweightCharts.createChart(oiContainer, {
@@ -529,44 +573,20 @@ function initOIChart() {
 // Load historical price & OI data
 async function loadOIHistory(symbol) {
     try {
-        let candlesList = [];
-        
-        // Fetch candles based on mode
-        if (config.mode === "live") {
-            try {
-                const res = await fetch(`/api/angel-history?symbol=${symbol}`);
-                const data = await res.json();
-                if (data && data.status !== "error" && data.data && data.data.length > 0) {
-                    candlesList = data.data.map(c => {
-                        const timestamp = Math.floor(new Date(c[0]).getTime() / 1000);
-                        return {
-                            time: timestamp,
-                            open: c[1],
-                            high: c[2],
-                            low: c[3],
-                            close: c[4],
-                            volume: c[5]
-                        };
-                    });
-                    console.log(`Loaded ${candlesList.length} actual historical candles from Angel One.`);
-                } else {
-                    console.warn("Angel One history fetch failed or empty:", data ? data.message : "No response");
-                }
-            } catch (err) {
-                console.error("Error fetching live historical candles from Angel One:", err);
-            }
+        // 1. Fetch real historical data from local/cloud database
+        let oiList = [];
+        try {
+            const oiRes = await fetch(`/api/historical-oi?symbol=${symbol}`);
+            oiList = await oiRes.json();
+        } catch (err) {
+            console.error("Error loading historical OI from DB:", err);
         }
-        
-        // Fallback to simulated baseline history if candlesList is empty
-        if (candlesList.length === 0) {
-            const res = await fetch(`/api/historical-candles?symbol=${symbol}`);
-            candlesList = await res.json();
-            console.log(`Loaded ${candlesList.length} fallback/simulated candles.`);
-        }
-        
-        if (candlesList.length > 0) {
-            // Set price candles on candlestickSeries
-            const priceData = candlesList.map(c => ({
+
+        if (oiList && oiList.length > 0) {
+            // We have real database data! Populate everything from the database
+            console.log(`Loaded ${oiList.length} historical data points from database.`);
+            
+            const priceData = oiList.map(c => ({
                 time: c.time,
                 open: c.open,
                 high: c.high,
@@ -575,36 +595,48 @@ async function loadOIHistory(symbol) {
             }));
             candlestickSeries.setData(priceData);
             
-            // Set volume bars on volumeSeries
-            const volumeData = candlesList.map(c => ({
+            const volumeData = oiList.map(c => ({
                 time: c.time,
                 value: c.volume || 0,
                 color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
             }));
             volumeSeries.setData(volumeData);
             
-            // Now load OI history from database
-            let oiList = [];
-            try {
-                const oiRes = await fetch(`/api/historical-oi?symbol=${symbol}`);
-                oiList = await oiRes.json();
-            } catch (err) {
-                console.error("Error loading historical OI from DB:", err);
-            }
+            const oiData = oiList.map(c => ({
+                time: c.time,
+                value: c.oi || 0
+            }));
+            oiSeries.setData(oiData);
             
-            let oiData = [];
-            if (oiList && oiList.length > 0) {
-                oiData = oiList.map(oiTick => ({
-                    time: oiTick.time,
-                    value: oiTick.oi || 0
+            startingOI = oiList[0].oi || 0;
+            yesterdayClose = oiList[0].open;
+        } else {
+            // Database is empty (e.g. first run). Fall back to simulated baseline history
+            console.log("Database history is empty. Generating simulated historical data points for timeline...");
+            
+            let candlesList = [];
+            const res = await fetch(`/api/historical-candles?symbol=${symbol}`);
+            candlesList = await res.json();
+            
+            if (candlesList.length > 0) {
+                const priceData = candlesList.map(c => ({
+                    time: c.time,
+                    open: c.open,
+                    high: c.high,
+                    low: c.low,
+                    close: c.close
                 }));
-                startingOI = oiList[0].oi || 0;
-                console.log(`Loaded ${oiData.length} historical OI data points from database.`);
-            } else {
-                // Generate simulated historical OI sequence matching the price candles timeline
-                console.log("Database history is empty. Generating simulated historical OI data points for timeline...");
+                candlestickSeries.setData(priceData);
+                
+                const volumeData = candlesList.map(c => ({
+                    time: c.time,
+                    value: c.volume || 0,
+                    color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+                }));
+                volumeSeries.setData(volumeData);
+                
                 let currentOi = (config.futures_symbols && config.futures_symbols[symbol] && config.futures_symbols[symbol].oi) || 10000;
-                oiData = candlesList.map(c => {
+                const oiData = candlesList.map(c => {
                     const change = (Math.random() - 0.48) * 150;
                     currentOi = Math.max(1000, Math.floor(currentOi + change));
                     return {
@@ -612,25 +644,25 @@ async function loadOIHistory(symbol) {
                         value: currentOi
                     };
                 });
+                oiSeries.setData(oiData);
                 startingOI = oiData[0].value;
+                yesterdayClose = candlesList[0].open;
+            } else {
+                candlestickSeries.setData([]);
+                volumeSeries.setData([]);
+                oiSeries.setData([]);
+                startingOI = null;
             }
-            
-            oiSeries.setData(oiData);
-            yesterdayClose = candlesList[0].open;
-            
-            priceChart.timeScale().fitContent();
-            setTimeout(() => {
-                const range = priceChart.timeScale().getVisibleLogicalRange();
-                if (range) {
-                    oiChart.timeScale().setVisibleLogicalRange(range);
-                }
-            }, 50);
-        } else {
-            candlestickSeries.setData([]);
-            volumeSeries.setData([]);
-            oiSeries.setData([]);
-            startingOI = null;
         }
+        
+        priceChart.timeScale().fitContent();
+        setTimeout(() => {
+            const range = priceChart.timeScale().getVisibleLogicalRange();
+            if (range) {
+                oiChart.timeScale().setVisibleLogicalRange(range);
+            }
+        }, 50);
+        
     } catch (err) {
         console.error("Error loading history:", err);
     }
@@ -665,7 +697,7 @@ function connectWebSocket() {
 // Handle incoming websocket ticks
 function handleLiveTick(tick) {
     if (tick.symbol === currentSymbol) {
-        const timeVal = Math.floor(tick.time);
+        const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % 60);
         
         // Update price candle (LTP) on price chart
         if (candlestickSeries) {
