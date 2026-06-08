@@ -351,7 +351,29 @@ def get_unified_history(symbol: str, connector):
         target_price = session_ticks[0]["open"]
         target_oi = session_ticks[0]["oi"]
         target_vol = session_ticks[0]["volume"]
-        start_oi = target_oi  # Keep it flat at the real open value
+        
+        # Try to get yesterday's closing OI to use as the starting baseline for today's prefill
+        yest_oi = None
+        try:
+            from backend.database import get_db_connection, get_cursor, get_placeholder
+            conn = get_db_connection()
+            cursor = get_cursor(conn)
+            p = get_placeholder()
+            query = f"""
+                SELECT open_interest FROM ticks
+                WHERE symbol = {p} AND timestamp < {p}
+                ORDER BY timestamp DESC LIMIT 1
+            """
+            cursor.execute(query, (symbol, market_open_epoch))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if row:
+                yest_oi = row["open_interest"]
+        except Exception as e:
+            print(f"Error getting yesterday closing OI for prefill: {e}")
+            
+        start_oi = yest_oi if yest_oi is not None else target_oi
     else:
         target_price = baseline.get("price") or start_price
         target_oi = baseline.get("oi") or start_oi
@@ -469,6 +491,31 @@ def get_market_open_oi(symbol: str, connector):
         return market_open_oi_cache[cache_key]
         
     try:
+        # 1. Try to get the last tick from yesterday's session to find yesterday's closing OI
+        from backend.database import get_db_connection, get_cursor, get_placeholder
+        conn = get_db_connection()
+        cursor = get_cursor(conn)
+        p = get_placeholder()
+        query = f"""
+            SELECT open_interest FROM ticks
+            WHERE symbol = {p} AND timestamp < {p}
+            ORDER BY timestamp DESC LIMIT 1
+        """
+        cursor.execute(query, (symbol, market_open_epoch))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if row:
+            val = row["open_interest"]
+            print(f"get_market_open_oi: Found yesterday's closing OI from database: {val}")
+            market_open_oi_cache[cache_key] = val
+            return val
+    except Exception as db_err:
+        print(f"Error querying yesterday's close OI: {db_err}")
+        
+    # 2. Fallback: Find the first tick of today from get_unified_history
+    try:
         history = get_unified_history(symbol, connector)
         if history:
             val = None
@@ -481,7 +528,7 @@ def get_market_open_oi(symbol: str, connector):
             market_open_oi_cache[cache_key] = val
             return val
     except Exception as e:
-        print(f"Error getting market open OI: {e}")
+        print(f"Error getting market open OI fallback: {e}")
     return 0
 
 def make_nocache_response(content):
