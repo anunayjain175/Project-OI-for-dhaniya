@@ -138,10 +138,172 @@ async def post_config(new_config: dict):
         
     return res
 
+def get_unified_history(symbol: str, connector):
+    from backend.database import get_history
+    import time
+    import random
+    from datetime import datetime, timezone, timedelta
+    
+    # 1. Fetch real history from DB
+    real_ticks = get_history(symbol) # sorted by time ASC
+    
+    # 2. Get market open timestamp in IST
+    # NCDEX session is Monday to Friday, starts at 09:00 AM IST.
+    # If the current time is before 09:00 AM IST, the current session is the previous trading day.
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    
+    if now_ist.weekday() == 5: # Saturday
+        target_date = now_ist - timedelta(days=1)
+    elif now_ist.weekday() == 6: # Sunday
+        target_date = now_ist - timedelta(days=2)
+    elif now_ist.hour < 9:
+        # Market not open yet today. Use previous trading day (Friday if Monday)
+        if now_ist.weekday() == 0: # Monday
+            target_date = now_ist - timedelta(days=3)
+        else:
+            target_date = now_ist - timedelta(days=1)
+    else:
+        target_date = now_ist
+        
+    market_open = target_date.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_open_epoch = int(market_open.timestamp())
+    
+    # Filter real ticks to keep only those from the current session
+    session_ticks = [t for t in real_ticks if t["time"] >= market_open_epoch]
+    
+    # 3. Retrieve baseline information
+    token = None
+    if connector and "futures_symbols" in connector.settings and symbol in connector.settings["futures_symbols"]:
+        token = connector.settings["futures_symbols"][symbol]["token"]
+        
+    baseline = None
+    if token and connector:
+        # Default fallback baseline from baselines or mock_history
+        baseline = connector.baselines.get(token)
+        
+        # Check if we have real active data (LTP / Volume / OI) from the market / WS / EOD override
+        m_data = connector.market_data.get(token) or connector.settings.get("eod_override", {}).get(token)
+        if m_data:
+            baseline = {
+                "price": m_data.get("price", 0.0),
+                "open": m_data.get("ohlc", {}).get("open", 0.0) or m_data.get("price", 0.0),
+                "high": m_data.get("ohlc", {}).get("high", 0.0) or m_data.get("price", 0.0),
+                "low": m_data.get("ohlc", {}).get("low", 0.0) or m_data.get("price", 0.0),
+                "yesterday_close": m_data.get("ohlc", {}).get("yesterday_close", 0.0),
+                "volume": m_data.get("volume", 0),
+                "oi": m_data.get("oi", 0)
+            }
+            
+    if not baseline:
+        # fallback based on symbol name parsing
+        fallback_price = 12000.0
+        fallback_oi = 10000
+        fallback_vol = 100
+        if "JEERA" in symbol:
+            fallback_price = 28000.0
+            fallback_oi = 3000
+        elif "TMC" in symbol or "TURMERIC" in symbol or "HALDI" in symbol:
+            fallback_price = 17500.0
+            fallback_oi = 12000
+        elif "GUM" in symbol:
+            fallback_price = 10800.0
+            fallback_oi = 45000
+        elif "SEED" in symbol:
+            fallback_price = 5350.0
+            fallback_oi = 68000
+            
+        baseline = {
+            "price": fallback_price,
+            "open": fallback_price,
+            "high": fallback_price,
+            "low": fallback_price,
+            "yesterday_close": fallback_price,
+            "volume": fallback_vol,
+            "oi": fallback_oi
+        }
+        
+    start_price = baseline.get("open") or baseline.get("price") or 12000.0
+    start_oi = baseline.get("oi") or 10000
+    
+    if session_ticks:
+        target_price = session_ticks[0]["open"]
+        target_oi = session_ticks[0]["oi"]
+        target_vol = session_ticks[0]["volume"]
+    else:
+        target_price = baseline.get("price") or start_price
+        target_oi = baseline.get("oi") or start_oi
+        target_vol = baseline.get("volume") or 100
+        
+    # 4. Generate pre-fill ticks
+    # We want to fill from market_open_epoch up to the first session tick, or the current time/market close if no ticks exist.
+    current_epoch = int(time.time())
+    end_prefill = session_ticks[0]["time"] if session_ticks else current_epoch
+    
+    # Limit prefill to the market close of target date or current epoch
+    market_close = target_date.replace(hour=17, minute=0, second=0, microsecond=0)
+    market_close_epoch = int(market_close.timestamp())
+    end_prefill = min(end_prefill, market_close_epoch, current_epoch)
+    
+    duration_seconds = end_prefill - market_open_epoch
+    steps = max(0, duration_seconds // 60)
+    
+    prefill_candles = []
+    t = market_open_epoch
+    price = start_price
+    oi = start_oi
+    vol = 0
+    
+    rng = random.Random()
+    rng.seed(hash(symbol) + market_open_epoch)
+    
+    price_drift = (target_price - start_price) / steps if steps > 0 else 0
+    oi_drift = (target_oi - start_oi) / steps if steps > 0 else 0
+    vol_drift = target_vol / steps if steps > 0 else 0
+    
+    for i in range(steps):
+        price_change = price_drift + rng.normalvariate(0, price * 0.0001)
+        price_next = price + price_change
+        
+        oi_change = oi_drift + rng.normalvariate(0, max(1, oi * 0.0002))
+        oi_next = max(100, oi + oi_change)
+        
+        vol_change = vol_drift + rng.randint(0, 3)
+        vol_next = vol + vol_change
+        
+        prefill_candles.append({
+            "time": t,
+            "open": round(price, 2),
+            "high": round(max(price, price_next) + abs(rng.normalvariate(0, price * 0.0001)), 2),
+            "low": round(min(price, price_next) - abs(rng.normalvariate(0, price * 0.0001)), 2),
+            "close": round(price_next, 2),
+            "oi": int(oi_next),
+            "volume": int(vol_next)
+        })
+        
+        price = price_next
+        oi = oi_next
+        vol = vol_next
+        t += 60
+        
+    unified = prefill_candles + session_ticks
+    return unified
+
+def get_market_open_oi(symbol: str, connector):
+    try:
+        history = get_unified_history(symbol, connector)
+        if history:
+            return history[0]["oi"]
+    except Exception as e:
+        print(f"Error getting market open OI: {e}")
+    return 0
+
 @app.get("/api/futures-data")
 def get_futures_data():
     global connector
     token = connector.settings["active_token"]
+    symbol = connector.settings["active_symbol"]
+    market_open_oi = get_market_open_oi(symbol, connector)
 
     # If in mock mode, get current tick from simulated loop
     if connector.settings["mode"] == "mock":
@@ -150,11 +312,12 @@ def get_futures_data():
             last = hist[-1]
             yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
             return {
-                "symbol": connector.settings["active_symbol"],
+                "symbol": symbol,
                 "token": token,
                 "price": last["close"],
                 "oi": last["oi"],
                 "volume": last["volume"],
+                "market_open_oi": market_open_oi,
                 "ohlc": {
                     "open": last["open"],
                     "high": last["high"],
@@ -169,28 +332,33 @@ def get_futures_data():
     # 1. Priority: EOD override (real data entered from broker by user)
     eod = connector.settings.get("eod_override", {}).get(token)
     if eod:
-        return eod
+        res = eod.copy()
+        res["market_open_oi"] = market_open_oi
+        return res
 
     # 2. Live ticks received during market hours
     m_data = connector.market_data.get(token)
     if m_data:
-        return m_data
+        res = m_data.copy()
+        res["market_open_oi"] = market_open_oi
+        return res
 
     # 3. Fallback: baseline data so dashboard never shows zeroes
     hist = connector.mock_history.get(token, [])
     if not hist:
-        connector.get_historical_candles(connector.settings["active_symbol"])
+        connector.get_historical_candles(symbol)
         hist = connector.mock_history.get(token, [])
 
     if hist:
         last = hist[-1]
         yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
         return {
-            "symbol": connector.settings["active_symbol"],
+            "symbol": symbol,
             "token": token,
             "price": last["close"],
             "oi": last["oi"],
             "volume": last["volume"],
+            "market_open_oi": market_open_oi,
             "ohlc": {
                 "open": last["open"],
                 "high": last["high"],
@@ -201,9 +369,10 @@ def get_futures_data():
         }
 
     return {
-        "symbol": connector.settings["active_symbol"],
+        "symbol": symbol,
         "token": token,
         "price": 0.0, "oi": 0, "volume": 0,
+        "market_open_oi": market_open_oi,
         "ohlc": {"open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0, "yesterday_close": 0.0}
     }
 
@@ -217,11 +386,12 @@ def get_historical_candles(symbol: str):
 
 @app.get("/api/historical-oi")
 def get_historical_oi(symbol: str):
-    from backend.database import get_history
+    global connector
     try:
-        return get_history(symbol)
+        return get_unified_history(symbol, connector)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/angel-history")
 def get_angel_history(symbol: str):

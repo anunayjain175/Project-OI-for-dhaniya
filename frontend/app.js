@@ -391,12 +391,12 @@ function initPriceChart() {
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
-                    const day = String(date.getDate()).padStart(2, '0');
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getUTCDate()).padStart(2, '0');
+                    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
                     return `${day}/${month}`;
                 } else {
-                    const hours = String(date.getHours()).padStart(2, '0');
-                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    const hours = String(date.getUTCHours()).padStart(2, '0');
+                    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
                     return `${hours}:${minutes}`;
                 }
             }
@@ -404,10 +404,10 @@ function initPriceChart() {
         localization: {
             timeFormatter: (time) => {
                 const date = new Date(time * 1000);
-                const hours = String(date.getHours()).padStart(2, '0');
-                const minutes = String(date.getMinutes()).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const hours = String(date.getUTCHours()).padStart(2, '0');
+                const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                const day = String(date.getUTCDate()).padStart(2, '0');
+                const month = String(date.getUTCMonth() + 1).padStart(2, '0');
                 return `${day}/${month} ${hours}:${minutes}`;
             }
         }
@@ -523,12 +523,12 @@ function initOIChart() {
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
-                    const day = String(date.getDate()).padStart(2, '0');
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getUTCDate()).padStart(2, '0');
+                    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
                     return `${day}/${month}`;
                 } else {
-                    const hours = String(date.getHours()).padStart(2, '0');
-                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    const hours = String(date.getUTCHours()).padStart(2, '0');
+                    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
                     return `${hours}:${minutes}`;
                 }
             }
@@ -536,10 +536,10 @@ function initOIChart() {
         localization: {
             timeFormatter: (time) => {
                 const date = new Date(time * 1000);
-                const hours = String(date.getHours()).padStart(2, '0');
-                const minutes = String(date.getMinutes()).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const hours = String(date.getUTCHours()).padStart(2, '0');
+                const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                const day = String(date.getUTCDate()).padStart(2, '0');
+                const month = String(date.getUTCMonth() + 1).padStart(2, '0');
                 return `${day}/${month} ${hours}:${minutes}`;
             }
         }
@@ -586,8 +586,9 @@ async function loadOIHistory(symbol) {
             // We have real database data! Populate everything from the database
             console.log(`Loaded ${oiList.length} historical data points from database.`);
             
+            const offsetSeconds = 19800; // 5.5 hours for IST
             const priceData = oiList.map(c => ({
-                time: c.time,
+                time: c.time + offsetSeconds,
                 open: c.open,
                 high: c.high,
                 low: c.low,
@@ -596,14 +597,14 @@ async function loadOIHistory(symbol) {
             candlestickSeries.setData(priceData);
             
             const volumeData = oiList.map(c => ({
-                time: c.time,
+                time: c.time + offsetSeconds,
                 value: c.volume || 0,
                 color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
             }));
             volumeSeries.setData(volumeData);
             
             const oiData = oiList.map(c => ({
-                time: c.time,
+                time: c.time + offsetSeconds,
                 value: c.oi || 0
             }));
             oiSeries.setData(oiData);
@@ -619,8 +620,9 @@ async function loadOIHistory(symbol) {
             candlesList = await res.json();
             
             if (candlesList.length > 0) {
+                const offsetSeconds = 19800; // 5.5 hours for IST
                 const priceData = candlesList.map(c => ({
-                    time: c.time,
+                    time: c.time + offsetSeconds,
                     open: c.open,
                     high: c.high,
                     low: c.low,
@@ -629,7 +631,7 @@ async function loadOIHistory(symbol) {
                 candlestickSeries.setData(priceData);
                 
                 const volumeData = candlesList.map(c => ({
-                    time: c.time,
+                    time: c.time + offsetSeconds,
                     value: c.volume || 0,
                     color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
                 }));
@@ -640,7 +642,7 @@ async function loadOIHistory(symbol) {
                     const change = (Math.random() - 0.48) * 150;
                     currentOi = Math.max(1000, Math.floor(currentOi + change));
                     return {
-                        time: c.time,
+                        time: c.time + offsetSeconds,
                         value: currentOi
                     };
                 });
@@ -697,7 +699,8 @@ function connectWebSocket() {
 // Handle incoming websocket ticks
 function handleLiveTick(tick) {
     if (tick.symbol === currentSymbol) {
-        const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % 60);
+        const offsetSeconds = 19800; // 5.5 hours for IST
+        const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % 60) + offsetSeconds;
         
         // Update price candle (LTP) on price chart
         if (candlestickSeries) {
@@ -777,7 +780,7 @@ function updateUIPanels(data) {
     futuresOiEl.innerText = formatNumber(oi);
     
     // Calculate OI shift relative to day's starting value
-    const baseOI = startingOI || oi;
+    const baseOI = data.market_open_oi || startingOI || oi;
     const oiDiff = oi - baseOI;
     const oiDiffPct = baseOI > 0 ? (oiDiff / baseOI) * 100 : 0.0;
     const oiSign = oiDiff >= 0 ? "+" : "";
