@@ -48,6 +48,15 @@ let yesterdayClose = 0.0;
 let lastOITick = 0;
 let lastPriceTick = 0.0;
 
+// State variables for active 1-minute candle aggregation
+let activeMinuteTime = null;
+let activeMinuteOpen = null;
+let activeMinuteHigh = null;
+let activeMinuteLow = null;
+let activeMinuteClose = null;
+let activeMinuteVolumeStart = null;
+let activeMinuteVolume = 0;
+
 // DOM Elements (declared globally, assigned after DOM loads)
 let symbolSelect;
 let modeBadge;
@@ -147,6 +156,15 @@ function setupEventListeners() {
         currentSymbol = e.target.value;
         if (!currentSymbol) return;
         chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
+
+        // Reset active 1-minute candle tracking state
+        activeMinuteTime = null;
+        activeMinuteOpen = null;
+        activeMinuteHigh = null;
+        activeMinuteLow = null;
+        activeMinuteClose = null;
+        activeMinuteVolumeStart = null;
+        activeMinuteVolume = 0;
 
         // Notify backend of symbol change
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -596,11 +614,14 @@ async function loadOIHistory(symbol) {
             }));
             candlestickSeries.setData(priceData);
             
-            const volumeData = oiList.map(c => ({
-                time: c.time + offsetSeconds,
-                value: c.volume || 0,
-                color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
-            }));
+            const volumeData = oiList.map((c, i) => {
+                const diff = i > 0 ? (c.volume - oiList[i - 1].volume) : 0;
+                return {
+                    time: c.time + offsetSeconds,
+                    value: diff >= 0 ? diff : 0,
+                    color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+                };
+            });
             volumeSeries.setData(volumeData);
             
             const oiData = oiList.map(c => ({
@@ -611,6 +632,16 @@ async function loadOIHistory(symbol) {
             
             startingOI = oiList[0].oi || 0;
             yesterdayClose = oiList[0].open;
+
+            // Sync active minute aggregation variables with the last historical candle
+            const lastCandle = oiList[oiList.length - 1];
+            activeMinuteTime = lastCandle.time + offsetSeconds;
+            activeMinuteOpen = lastCandle.open;
+            activeMinuteHigh = lastCandle.high;
+            activeMinuteLow = lastCandle.low;
+            activeMinuteClose = lastCandle.close;
+            activeMinuteVolumeStart = lastCandle.volume || 0;
+            activeMinuteVolume = 0;
         } else {
             // Database is empty (e.g. first run). Fall back to simulated baseline history
             console.log("Database history is empty. Generating simulated historical data points for timeline...");
@@ -630,11 +661,14 @@ async function loadOIHistory(symbol) {
                 }));
                 candlestickSeries.setData(priceData);
                 
-                const volumeData = candlesList.map(c => ({
-                    time: c.time + offsetSeconds,
-                    value: c.volume || 0,
-                    color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
-                }));
+                const volumeData = candlesList.map((c, i) => {
+                    const diff = i > 0 ? (c.volume - candlesList[i - 1].volume) : 0;
+                    return {
+                        time: c.time + offsetSeconds,
+                        value: diff >= 0 ? diff : 0,
+                        color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+                    };
+                });
                 volumeSeries.setData(volumeData);
                 
                 let currentOi = (config.futures_symbols && config.futures_symbols[symbol] && config.futures_symbols[symbol].oi) || 10000;
@@ -649,6 +683,16 @@ async function loadOIHistory(symbol) {
                 oiSeries.setData(oiData);
                 startingOI = oiData[0].value;
                 yesterdayClose = candlesList[0].open;
+
+                // Sync active minute aggregation variables with the last simulated candle
+                const lastCandle = candlesList[candlesList.length - 1];
+                activeMinuteTime = lastCandle.time + offsetSeconds;
+                activeMinuteOpen = lastCandle.open;
+                activeMinuteHigh = lastCandle.high;
+                activeMinuteLow = lastCandle.low;
+                activeMinuteClose = lastCandle.close;
+                activeMinuteVolumeStart = lastCandle.volume || 0;
+                activeMinuteVolume = 0;
             } else {
                 candlestickSeries.setData([]);
                 volumeSeries.setData([]);
@@ -702,23 +746,48 @@ function handleLiveTick(tick) {
         const offsetSeconds = 19800; // 5.5 hours for IST
         const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % 60) + offsetSeconds;
         
+        // 1. Aggregate 1-minute price candlestick
+        if (activeMinuteTime !== timeVal) {
+            // New minute has started! Set volume baseline to the previous minute's last volume
+            activeMinuteVolumeStart = tick.volume;
+            
+            activeMinuteTime = timeVal;
+            activeMinuteOpen = tick.price;
+            activeMinuteHigh = tick.price;
+            activeMinuteLow = tick.price;
+            activeMinuteClose = tick.price;
+            activeMinuteVolume = 0;
+        } else {
+            // Inside the same minute
+            activeMinuteHigh = Math.max(activeMinuteHigh, tick.price);
+            activeMinuteLow = Math.min(activeMinuteLow, tick.price);
+            activeMinuteClose = tick.price;
+            if (activeMinuteVolumeStart !== null) {
+                const diff = tick.volume - activeMinuteVolumeStart;
+                activeMinuteVolume = diff >= 0 ? diff : 0;
+            } else {
+                activeMinuteVolumeStart = tick.volume;
+                activeMinuteVolume = 0;
+            }
+        }
+        
         // Update price candle (LTP) on price chart
         if (candlestickSeries) {
             candlestickSeries.update({
-                time: timeVal,
-                open: tick.ohlc.open,
-                high: tick.ohlc.high,
-                low: tick.ohlc.low,
-                close: tick.price
+                time: activeMinuteTime,
+                open: activeMinuteOpen,
+                high: activeMinuteHigh,
+                low: activeMinuteLow,
+                close: activeMinuteClose
             });
         }
         
         // Update volume on price chart
         if (volumeSeries) {
             volumeSeries.update({
-                time: timeVal,
-                value: tick.volume,
-                color: tick.price >= tick.ohlc.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+                time: activeMinuteTime,
+                value: activeMinuteVolume,
+                color: activeMinuteClose >= activeMinuteOpen ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
             });
         }
         
