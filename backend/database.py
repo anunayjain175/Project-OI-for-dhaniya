@@ -37,6 +37,24 @@ def init_db():
     conn = get_db_connection()
     cursor = get_cursor(conn)
     
+    # Auto-migration: check if old schema exists and needs to be dropped
+    schema_needs_reset = False
+    try:
+        cursor.execute("SELECT open FROM ticks LIMIT 1")
+    except Exception:
+        # Table exists but has old schema (lacks 'open' column) or table doesn't exist
+        schema_needs_reset = True
+        if is_postgres():
+            conn.rollback() # rollback failed query transaction
+            
+    if schema_needs_reset:
+        print("Migrating/reinitializing database schema to support OHLC candles...")
+        if is_postgres():
+            cursor.execute("DROP TABLE IF EXISTS ticks CASCADE")
+        else:
+            cursor.execute("DROP TABLE IF EXISTS ticks")
+        conn.commit()
+
     if is_postgres():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ticks (
@@ -44,7 +62,10 @@ def init_db():
                 timestamp INTEGER NOT NULL,
                 symbol VARCHAR(100) NOT NULL,
                 token VARCHAR(100) NOT NULL,
-                price REAL NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
                 open_interest INTEGER NOT NULL,
                 volume INTEGER NOT NULL
             )
@@ -58,7 +79,10 @@ def init_db():
                 timestamp INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 token TEXT NOT NULL,
-                price REAL NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
                 open_interest INTEGER NOT NULL,
                 volume INTEGER NOT NULL
             )
@@ -82,7 +106,7 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
     p = get_placeholder()
     
     query = f"""
-        SELECT id, price, open_interest, volume FROM ticks 
+        SELECT id, open, high, low, close, open_interest, volume FROM ticks 
         WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
         ORDER BY timestamp DESC LIMIT 1
     """
@@ -90,23 +114,27 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
     row = cursor.fetchone()
     
     if row:
-        # Update existing tick for the current minute with latest values
+        # Update existing tick: keep open, adjust high/low, set close to current price
+        new_high = max(row["high"], price)
+        new_low = min(row["low"], price)
         update_query = f"""
             UPDATE ticks SET 
                 timestamp = {p},
-                price = {p},
+                high = {p},
+                low = {p},
+                close = {p},
                 open_interest = {p},
                 volume = {p}
             WHERE id = {p}
         """
-        cursor.execute(update_query, (now, price, open_interest, volume, row["id"]))
+        cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, row["id"]))
     else:
-        # Insert new tick for this minute
+        # Insert a new tick for the minute: open=high=low=close=price
         insert_query = f"""
-            INSERT INTO ticks (timestamp, symbol, token, price, open_interest, volume)
-            VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+            INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
+            VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
         """
-        cursor.execute(insert_query, (now, symbol, token, price, open_interest, volume))
+        cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume))
         
     conn.commit()
     cursor.close()
@@ -123,7 +151,10 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
         query = f"""
             SELECT 
                 (timestamp / {p}) * {p} AS interval_time,
-                price,
+                open,
+                high,
+                low,
+                close,
                 open_interest,
                 volume
             FROM ticks
@@ -135,7 +166,10 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
         query = f"""
             SELECT 
                 (timestamp / {p}) * {p} AS interval_time,
-                price,
+                open,
+                high,
+                low,
+                close,
                 open_interest,
                 volume
             FROM ticks
@@ -155,25 +189,28 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
     candles = {}
     for row in rows:
         t = row["interval_time"]
-        p_val = row["price"]
+        op = row["open"]
+        hi = row["high"]
+        lo = row["low"]
+        cl = row["close"]
         oi = row["open_interest"]
         vol = row["volume"]
         
         if t not in candles:
             candles[t] = {
                 "time": t,
-                "open": p_val,
-                "high": p_val,
-                "low": p_val,
-                "close": p_val,
+                "open": op,
+                "high": hi,
+                "low": lo,
+                "close": cl,
                 "oi": oi,
                 "volume": vol
             }
         else:
             candle = candles[t]
-            candle["high"] = max(candle["high"], p_val)
-            candle["low"] = min(candle["low"], p_val)
-            candle["close"] = p_val
+            candle["high"] = max(candle["high"], hi)
+            candle["low"] = min(candle["low"], lo)
+            candle["close"] = cl
             candle["oi"] = oi
             candle["volume"] = max(candle["volume"], vol)  # volume is cumulative
             
