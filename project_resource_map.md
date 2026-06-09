@@ -49,7 +49,10 @@ Stored in SQLite (`backend/oi_history.db`) or PostgreSQL (determined by `DATABAS
 *   **timestamp** (`INTEGER`): Epoch timestamp.
 *   **symbol** (`TEXT` / `VARCHAR(100)`): e.g., `"DHANIYA AUG 26"`.
 *   **token** (`TEXT` / `VARCHAR(100)`): e.g., `"DHANIYA20AUG2026"`.
-*   **price** (`REAL`): Last Traded Price (LTP).
+*   **open** (`REAL`): Candle Open Price.
+*   **high** (`REAL`): Candle High Price.
+*   **low** (`REAL`): Candle Low Price.
+*   **close** (`REAL`): Candle Close Price (LTP).
 *   **open_interest** (`INTEGER`): Current Open Interest.
 *   **volume** (`INTEGER`): Cumulative contract volume since day open.
 
@@ -72,6 +75,12 @@ NCDEX sessions run Monday-Friday, starting at **10:00 AM IST**. If there is miss
 *   `frontend/app.js` caches all current chart ticks inside a `currentHistoryData` list.
 *   On **crosshair hover**, the exact OHLC, Volume, and Open Interest values are resolved from this cache and mapped to `#legend-open`, `#legend-high`, `#legend-low`, `#legend-close`, `#legend-volume`, and `#legend-oi`.
 *   When the cursor leaves the chart, the legend defaults to the **latest live candle's values**.
+
+### 4. Active Contract Switching & Reconnection
+*   Changing contracts is done via dropdown value selection on the client. It sends a WebSocket message `change_symbol` to update backend in-memory settings (written to `config.json`).
+*   **No WS Restart Needed**: The connector remains active, filtering and broadcasting ticks dynamically.
+*   **Reconnection Sync**: On WebSocket `onopen`, the client sends the currently selected symbol to backend to ensure they stay synced.
+*   **Chart Cleanups**: Price and OI charts must be disposed of via `chart.remove()` prior to recreating instances to avoid zombie logical range handlers.
 
 ---
 
