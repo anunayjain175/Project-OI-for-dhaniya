@@ -535,8 +535,6 @@ function initPriceChart() {
         }
     });
     resizeObserver.observe(priceContainer);
-    
-    setupChartSynchronization();
 }
 
 // Global synchronization handlers to prevent memory leaks and duplicate subscriptions
@@ -546,7 +544,10 @@ let priceCrosshairMoveHandler = null;
 let oiCrosshairMoveHandler = null;
 
 function setupChartSynchronization() {
-    if (!priceChart || !oiChart) return;
+    if (!priceChart || !oiChart) {
+        console.warn("setupChartSynchronization: priceChart or oiChart not initialized yet. Skipping sync setup.");
+        return;
+    }
 
     // Unsubscribe previous handlers if they exist to prevent memory leaks and multiple triggers
     if (priceLogicalRangeChangeHandler) {
@@ -888,11 +889,13 @@ async function loadOIHistory(symbol) {
         priceChart.timeScale().fitContent();
         oiChart.timeScale().fitContent();
         setTimeout(() => {
-            const range = priceChart.timeScale().getVisibleLogicalRange();
-            if (range) {
-                oiChart.timeScale().setVisibleLogicalRange(range);
+            if (priceChart && oiChart) {
+                const range = priceChart.timeScale().getVisibleLogicalRange();
+                if (range) {
+                    oiChart.timeScale().setVisibleLogicalRange(range);
+                }
             }
-        }, 50);
+        }, 250);
         
         clearLegendValues();
     } catch (err) {
