@@ -646,7 +646,14 @@ def get_futures_data(symbol: str = None):
             res_data = eod.copy()
             res_data["market_open_oi"] = market_open_oi
         else:
+            # Try to query a live REST quote to populate the connector's memory cache
             m_data = connector.market_data.get(token)
+            if not m_data and hasattr(connector, "update_market_data_from_quote"):
+                try:
+                    m_data = connector.update_market_data_from_quote(symbol, token)
+                except Exception as e:
+                    print(f"Error querying REST quote in endpoint: {e}")
+                    
             if m_data:
                 res_data = m_data.copy()
                 res_data["market_open_oi"] = market_open_oi
