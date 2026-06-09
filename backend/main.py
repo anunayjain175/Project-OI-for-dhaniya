@@ -167,8 +167,17 @@ def generate_illiquid_prefill(start_price, target_price, high_price, low_price, 
     if steps <= 0:
         return []
         
-    # 1. Determine active steps (about 25% of total steps, minimum 1 if steps > 0)
-    num_active = max(1, int(steps * 0.25))
+    # 1. Determine active steps dynamically based on total volume
+    # Highly active contracts should show dense candles; illiquid ones should show gaps.
+    active_ratio = 0.50
+    if total_volume > 2000:
+        active_ratio = 0.80
+    elif total_volume > 500:
+        active_ratio = 0.65
+    elif total_volume < 50:
+        active_ratio = 0.20
+        
+    num_active = max(1, int(steps * active_ratio))
     if num_active > steps:
         num_active = steps
         
