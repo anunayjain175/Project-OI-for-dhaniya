@@ -680,7 +680,6 @@ class AngelConnector:
                                                 }
                                             }
                                             self.market_data[tick_token] = dash_tick
-                                            self.market_data[self.settings["active_token"]] = dash_tick
                                             self.broadcast_callback(dash_tick)
                         except asyncio.TimeoutError:
                             continue
