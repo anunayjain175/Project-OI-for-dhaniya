@@ -1108,18 +1108,7 @@ function updateUIPanels(data) {
 function formatNumber(num) {
     const isNegative = num < 0;
     const val = Math.abs(num);
-    
-    let formatted = val;
-    if (val >= 10000000) {
-        formatted = (val / 10000000).toFixed(2) + " Cr";
-    } else if (val >= 100000) {
-        formatted = (val / 100000).toFixed(2) + " Lk";
-    } else if (val >= 1000) {
-        formatted = (val / 1000).toFixed(1) + " K";
-    } else {
-        formatted = val.toLocaleString("en-IN");
-    }
-    
+    const formatted = val.toLocaleString("en-IN");
     return (isNegative ? "-" : "") + formatted;
 }
 
