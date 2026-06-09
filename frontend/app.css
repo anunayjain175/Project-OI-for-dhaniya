@@ -856,11 +856,11 @@ body {
         flex: none;
     }
     
-    /* Chart wrapper: give it a fixed height on mobile so it doesn't collapse to 0 */
+    /* Chart wrapper: let it resize automatically to fit dynamic content height */
     .chart-container-wrapper {
-        height: 580px;
+        height: auto;
         flex: none;
-        overflow: visible;
+        overflow: hidden;
         padding: 10px 10px 12px 10px;
     }
     
