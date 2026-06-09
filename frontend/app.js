@@ -188,6 +188,8 @@ function setupEventListeners() {
         // Reload config, refresh Price Chart, and load new history
         await fetchConfig();
         initPriceChart();
+        initOIChart();
+        setupChartSynchronization();
         await loadOIHistory(currentSymbol);
         await fetchStatsData();
     });
@@ -260,6 +262,8 @@ function setupEventListeners() {
                 settingsModal.style.display = "none";
                 await fetchConfig();
                 initPriceChart();
+                initOIChart();
+                setupChartSynchronization();
                 await loadOIHistory(currentSymbol);
             } else {
                 alert("Error saving settings: " + data.message);
