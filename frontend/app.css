@@ -878,7 +878,9 @@ body {
         width: 100%;
         overflow-x: auto;
         white-space: nowrap;
-        padding: 6px 8px;
+        padding: 4px 6px;
+        gap: 6px;
+        font-size: 9.5px;
     }
     
     /* Set fixed minimum heights for charts so they are visible and usable */
