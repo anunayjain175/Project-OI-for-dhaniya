@@ -340,9 +340,20 @@ function setupEventListeners() {
             // Re-aggregate and render history with the selected timeframe
             applyTimeframe(mins);
             
+            // Re-initialize chart sync to ensure callbacks are properly bound
+            setupChartSynchronization();
+
             // Force timescale refresh so it rescales correctly
             priceChart.timeScale().fitContent();
             oiChart.timeScale().fitContent();
+            
+            // Sync the visible logical range after a tiny delay to allow the layout to calculate
+            setTimeout(() => {
+                const range = priceChart.timeScale().getVisibleLogicalRange();
+                if (range) {
+                    oiChart.timeScale().setVisibleLogicalRange(range);
+                }
+            }, 50);
         });
     });
 }
