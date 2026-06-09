@@ -1,9 +1,9 @@
-// Global Error Handler for UI diagnostics
 window.addEventListener('error', function(event) {
-    if (event.message && event.message.includes('ResizeObserver loop')) {
+    const msg = event.message || '';
+    if (msg.includes('ResizeObserver loop') || msg.includes('Script error')) {
         return;
     }
-    showErrorBanner('JS Error: ' + event.message + '\nSource: ' + event.filename + ':' + event.lineno + ':' + event.colno);
+    showErrorBanner('JS Error: ' + msg + '\nSource: ' + event.filename + ':' + event.lineno + ':' + event.colno);
 });
 window.addEventListener('unhandledrejection', function(event) {
     showErrorBanner('JS Promise Rejection: ' + event.reason + (event.reason && event.reason.stack ? '\nStack: ' + event.reason.stack : ''));

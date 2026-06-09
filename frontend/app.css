@@ -282,7 +282,13 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.chart-legend span {
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.legend-value {
     color: #ffffff;
     font-weight: 600;
 }
@@ -876,11 +882,13 @@ body {
     
     .chart-legend {
         width: 100%;
-        overflow-x: auto;
-        white-space: nowrap;
-        padding: 4px 6px;
-        gap: 6px;
-        font-size: 9.5px;
+        display: flex;
+        flex-wrap: wrap;
+        white-space: normal;
+        overflow-x: visible;
+        padding: 6px 8px;
+        gap: 6px 10px;
+        font-size: 10px;
     }
     
     /* Set fixed minimum heights for charts so they are visible and usable */
