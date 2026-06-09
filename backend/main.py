@@ -481,13 +481,19 @@ def get_unified_history(symbol: str, connector):
     except Exception as sim_err:
         print(f"Error running illiquid prefill simulation: {sim_err}")
         # fallback simple drift
+        safe_target_price = target_price if target_price is not None else 12000.0
+        safe_start_price = start_price if start_price is not None else 12000.0
+        safe_target_oi = target_oi if target_oi is not None else 10000
+        safe_start_oi = start_oi if start_oi is not None else 10000
+        safe_target_vol = target_vol if target_vol is not None else 100
+
         t = market_open_epoch
-        price = start_price
-        oi = start_oi
+        price = safe_start_price
+        oi = safe_start_oi
         vol = 0
-        price_drift = (target_price - start_price) / steps if steps > 0 else 0
-        oi_drift = (target_oi - start_oi) / steps if steps > 0 else 0
-        vol_drift = target_vol / steps if steps > 0 else 0
+        price_drift = (safe_target_price - safe_start_price) / steps if steps > 0 else 0
+        oi_drift = (safe_target_oi - safe_start_oi) / steps if steps > 0 else 0
+        vol_drift = safe_target_vol / steps if steps > 0 else 0
         
         for i in range(steps):
             price_change = price_drift + rng.normalvariate(0, price * 0.0001)
@@ -808,14 +814,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 cmd = json.loads(data)
                 if cmd.get("action") == "change_symbol":
                     symbol = cmd.get("symbol")
-                    old_token = connector.settings.get("active_token")
                     connector.save_config({"active_symbol": symbol})
-                    new_token = connector.settings.get("active_token")
-                    
-                    if old_token != new_token and connector.settings.get("mode") == "live":
-                        print("FastAPI: WS changed symbol, restarting connector...")
-                        connector.stop()
-                        connector.start(broadcast_tick)
                     print(f"WS: Changed active symbol to {symbol}")
             except:
                 pass

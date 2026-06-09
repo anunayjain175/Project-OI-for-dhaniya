@@ -185,8 +185,7 @@ function setupEventListeners() {
             }));
         }
 
-        // Reload config, refresh Price Chart, and load new history
-        await fetchConfig();
+        // Refresh Price Chart, and load new history (do NOT fetchConfig to avoid race conditions overriding activeSymbol)
         initPriceChart();
         initOIChart();
         setupChartSynchronization();
@@ -422,6 +421,14 @@ async function populateContractsDropdown() {
 
 // Initialize native Price Chart using Lightweight Charts
 function initPriceChart() {
+    if (priceChart) {
+        try {
+            priceChart.remove();
+        } catch (e) {
+            console.error("Error removing priceChart:", e);
+        }
+        priceChart = null;
+    }
     const priceContainer = document.getElementById("price-chart");
     priceContainer.innerHTML = "";
     
@@ -597,6 +604,14 @@ function setupChartSynchronization() {
 
 // Initialize Open Interest chart under TradingView pane
 function initOIChart() {
+    if (oiChart) {
+        try {
+            oiChart.remove();
+        } catch (e) {
+            console.error("Error removing oiChart:", e);
+        }
+        oiChart = null;
+    }
     const oiContainer = document.getElementById("oi-chart");
     oiContainer.innerHTML = "";
     
@@ -878,6 +893,14 @@ function connectWebSocket() {
         connectionBadge.className = "badge badge-connected";
         connectionBadge.innerHTML = '<i class="fa-solid fa-circle-dot"></i> WS CONNECTED';
         console.log("WebSocket connected");
+        
+        // Sync active contract on connect/reconnect
+        if (currentSymbol && socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                action: "change_symbol",
+                symbol: currentSymbol
+            }));
+        }
     };
     
     socket.onclose = () => {
