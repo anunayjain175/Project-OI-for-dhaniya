@@ -787,3 +787,126 @@ body {
     flex-direction: column;
     gap: 12px;
 }
+
+/* Mobile Responsive Overrides (Screen width <= 768px) */
+@media screen and (max-width: 768px) {
+    /* Let the page scroll naturally instead of locking to 100vh */
+    body {
+        height: auto;
+        overflow-y: auto;
+    }
+    
+    .app-container {
+        height: auto;
+        min-height: 100vh;
+    }
+    
+    /* Stack header contents vertically */
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 16px;
+    }
+    
+    .controls-group {
+        width: 100%;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .control-item {
+        width: 100%;
+    }
+    
+    .styled-select {
+        width: 100%;
+    }
+    
+    .status-indicators {
+        width: 100%;
+        justify-content: flex-start;
+        margin-top: 4px;
+    }
+    
+    /* KPI Grid: Change from 5 columns to 2 columns, letting sentiment card span full width */
+    .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        padding: 8px 16px;
+    }
+    
+    #card-trend {
+        grid-column: span 2;
+    }
+    
+    /* Main Content container: remove hidden overflow, set natural padding */
+    .main-content {
+        padding: 0 16px 8px 16px;
+        height: auto;
+        min-height: 600px;
+        overflow: visible;
+        flex: none;
+    }
+    
+    /* Chart wrapper: give it a fixed height on mobile so it doesn't collapse to 0 */
+    .chart-container-wrapper {
+        height: 580px;
+        flex: none;
+        overflow: visible;
+        padding: 10px 10px 12px 10px;
+    }
+    
+    /* Header bar layout on mobile */
+    .chart-header-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .timeframe-selector {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        margin-bottom: 4px;
+        width: 100%;
+        display: flex;
+        justify-content: flex-start;
+    }
+    
+    .chart-legend {
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        padding: 6px 8px;
+    }
+    
+    /* Set fixed minimum heights for charts so they are visible and usable */
+    .chart-pane {
+        height: 330px;
+        flex: none;
+    }
+    
+    .chart-pane-oi {
+        height: 180px;
+        flex: none;
+    }
+    
+    /* Details tab section: let it stack below the charts naturally */
+    .details-section {
+        height: 350px;
+        flex-shrink: 0;
+        padding: 0 16px 20px 16px;
+    }
+    
+    .tabs-header {
+        overflow-x: auto;
+        white-space: nowrap;
+        display: flex;
+    }
+    
+    .tab-btn {
+        flex-shrink: 0;
+    }
+}
+
