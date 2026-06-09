@@ -1047,7 +1047,7 @@ function handleLiveTick(tick) {
 // Regular stats fetch (backup polling)
 async function fetchStatsData() {
     try {
-        const res = await fetch(`/api/futures-data?_=${Date.now()}`);
+        const res = await fetch(`/api/futures-data?symbol=${encodeURIComponent(currentSymbol)}&_=${Date.now()}`);
         const stats = await res.json();
         
         if (stats && stats.price > 0) {

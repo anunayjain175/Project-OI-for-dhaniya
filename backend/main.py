@@ -607,10 +607,15 @@ def make_nocache_response(content):
     return response
 
 @app.get("/api/futures-data")
-def get_futures_data():
+def get_futures_data(symbol: str = None):
     global connector
-    token = connector.settings["active_token"]
-    symbol = connector.settings["active_symbol"]
+    if symbol:
+        token = connector.settings.get("futures_symbols", {}).get(symbol, {}).get("token")
+        if not token:
+            token = connector.settings["active_token"]
+    else:
+        symbol = connector.settings["active_symbol"]
+        token = connector.settings["active_token"]
     market_open_oi = get_market_open_oi(symbol, connector)
 
     res_data = None
