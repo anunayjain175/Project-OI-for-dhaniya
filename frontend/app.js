@@ -598,6 +598,7 @@ function setupChartSynchronization() {
 // Initialize Open Interest chart under TradingView pane
 function initOIChart() {
     const oiContainer = document.getElementById("oi-chart");
+    oiContainer.innerHTML = "";
     
     const chartOptions = {
         layout: {
