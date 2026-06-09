@@ -74,7 +74,7 @@ async def periodic_prune_task():
     import asyncio
     while True:
         try:
-            prune_ticks(days_to_keep=7)
+            prune_ticks(days_to_keep=35)
         except Exception as e:
             print(f"Error in periodic database prune task: {e}")
         # Run every 12 hours
@@ -321,11 +321,11 @@ def get_unified_history(symbol: str, connector):
     market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
     
-    # Keep only the last 5 days of ticks
-    five_days_ago = market_open_epoch - 5 * 24 * 3600
+    # Keep only the last 30 days of ticks
+    thirty_days_ago = market_open_epoch - 30 * 24 * 3600
     
-    # 2. Fetch real history from DB (filtered to 5 days)
-    real_ticks = get_history(symbol, start_timestamp=five_days_ago) # sorted by time ASC
+    # 2. Fetch real history from DB (filtered to 30 days)
+    real_ticks = get_history(symbol, start_timestamp=thirty_days_ago) # sorted by time ASC
     
     # Filter real ticks into today's session and past sessions
     session_ticks = [t for t in real_ticks if t["time"] >= market_open_epoch]
