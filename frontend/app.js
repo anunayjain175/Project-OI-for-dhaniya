@@ -190,6 +190,17 @@ function setupEventListeners() {
         initOIChart();
         setupChartSynchronization();
         await loadOIHistory(currentSymbol);
+        
+        // Final synchronization check after history load completes
+        setTimeout(() => {
+            if (priceChart && oiChart) {
+                const range = priceChart.timeScale().getVisibleLogicalRange();
+                if (range) {
+                    oiChart.timeScale().setVisibleLogicalRange(range);
+                }
+            }
+        }, 150);
+        
         await fetchStatsData();
     });
 
