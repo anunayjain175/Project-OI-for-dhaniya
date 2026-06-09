@@ -447,6 +447,7 @@ function initPriceChart() {
         rightPriceScale: {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             scaleMargins: { top: 0.15, bottom: 0.25 },
+            minimumWidth: 90,
         }
     });
 
@@ -620,6 +621,7 @@ function initOIChart() {
         rightPriceScale: {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             scaleMargins: { top: 0.1, bottom: 0.1 },
+            minimumWidth: 90,
         }
     });
     
@@ -658,7 +660,7 @@ async function loadOIHistory(symbol) {
             
             const offsetSeconds = 19800; // 5.5 hours for IST
             const priceData = oiList.map(c => ({
-                time: c.time + offsetSeconds,
+                time: Math.floor(c.time) + offsetSeconds,
                 open: c.open,
                 high: c.high,
                 low: c.low,
@@ -683,7 +685,7 @@ async function loadOIHistory(symbol) {
                     diff = c.volume;
                 }
                 return {
-                    time: c.time + offsetSeconds,
+                    time: Math.floor(c.time) + offsetSeconds,
                     value: diff >= 0 ? diff : 0,
                     color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
                 };
@@ -691,7 +693,7 @@ async function loadOIHistory(symbol) {
             volumeSeries.setData(volumeData);
             
             const oiData = oiList.map(c => ({
-                time: c.time + offsetSeconds,
+                time: Math.floor(c.time) + offsetSeconds,
                 value: c.oi || 0
             }));
             oiSeries.setData(oiData);
@@ -706,7 +708,7 @@ async function loadOIHistory(symbol) {
 
             // Sync active minute aggregation variables with the last historical candle
             const lastCandle = oiList[oiList.length - 1];
-            activeMinuteTime = lastCandle.time + offsetSeconds;
+            activeMinuteTime = Math.floor(lastCandle.time) + offsetSeconds;
             activeMinuteOpen = lastCandle.open;
             activeMinuteHigh = lastCandle.high;
             activeMinuteLow = lastCandle.low;
@@ -732,7 +734,7 @@ async function loadOIHistory(symbol) {
                     diff = c.volume;
                 }
                 return {
-                    time: c.time + offsetSeconds,
+                    time: Math.floor(c.time) + offsetSeconds,
                     open: c.open,
                     high: c.high,
                     low: c.low,
@@ -752,7 +754,7 @@ async function loadOIHistory(symbol) {
             if (candlesList.length > 0) {
                 const offsetSeconds = 19800; // 5.5 hours for IST
                 const priceData = candlesList.map(c => ({
-                    time: c.time + offsetSeconds,
+                    time: Math.floor(c.time) + offsetSeconds,
                     open: c.open,
                     high: c.high,
                     low: c.low,
@@ -763,7 +765,7 @@ async function loadOIHistory(symbol) {
                 const volumeData = candlesList.map((c, i) => {
                     const diff = i > 0 ? (c.volume - candlesList[i - 1].volume) : 0;
                     return {
-                        time: c.time + offsetSeconds,
+                        time: Math.floor(c.time) + offsetSeconds,
                         value: diff >= 0 ? diff : 0,
                         color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
                     };
@@ -775,7 +777,7 @@ async function loadOIHistory(symbol) {
                     const change = (Math.random() - 0.48) * 150;
                     currentOi = Math.max(1000, Math.floor(currentOi + change));
                     return {
-                        time: c.time + offsetSeconds,
+                        time: Math.floor(c.time) + offsetSeconds,
                         value: currentOi
                     };
                 });
@@ -785,7 +787,7 @@ async function loadOIHistory(symbol) {
 
                 // Sync active minute aggregation variables with the last simulated candle
                 const lastCandle = candlesList[candlesList.length - 1];
-                activeMinuteTime = lastCandle.time + offsetSeconds;
+                activeMinuteTime = Math.floor(lastCandle.time) + offsetSeconds;
                 activeMinuteOpen = lastCandle.open;
                 activeMinuteHigh = lastCandle.high;
                 activeMinuteLow = lastCandle.low;
@@ -797,7 +799,7 @@ async function loadOIHistory(symbol) {
                 currentHistoryData = candlesList.map((c, idx) => {
                     const diff = idx > 0 ? (c.volume - candlesList[idx - 1].volume) : 0;
                     return {
-                        time: c.time + offsetSeconds,
+                        time: Math.floor(c.time) + offsetSeconds,
                         open: c.open,
                         high: c.high,
                         low: c.low,
@@ -833,7 +835,11 @@ async function loadOIHistory(symbol) {
 // Connect to WebSocket
 function connectWebSocket() {
     const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProto}//${window.location.host}/ws`;
+    // Use 127.0.0.1 when on localhost to bypass Windows IPv6→IPv4 fallback (avoids ~2s first-connection delay)
+    const wsHost = window.location.hostname === "localhost"
+        ? `127.0.0.1:${window.location.port || 80}`
+        : window.location.host;
+    const wsUrl = `${wsProto}//${wsHost}/ws`;
     
     socket = new WebSocket(wsUrl);
     
@@ -1072,8 +1078,11 @@ function formatNumber(num) {
 function updateLegendValues(param) {
     if (!param || !param.time) return;
     
-    // Find matching candle in currentHistoryData
-    const dataPoint = currentHistoryData.find(d => d.time === param.time);
+    // Convert param.time to integer robustly
+    const targetTime = typeof param.time === 'number' ? param.time : (typeof param.time === 'string' ? parseInt(param.time) : param.time);
+    
+    // Find matching candle in currentHistoryData (matching integer time values)
+    const dataPoint = currentHistoryData.find(d => Math.floor(d.time) === Math.floor(targetTime));
     if (dataPoint) {
         document.getElementById("legend-open").innerText = dataPoint.open !== undefined ? dataPoint.open.toFixed(2) : "-";
         document.getElementById("legend-high").innerText = dataPoint.high !== undefined ? dataPoint.high.toFixed(2) : "-";

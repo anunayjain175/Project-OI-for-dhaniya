@@ -72,7 +72,6 @@ def init_db():
     print(f"Database initialized. Type: {'PostgreSQL' if is_postgres() else 'SQLite'}")
 
 def save_tick(symbol: str, token: str, price: float, open_interest: int, volume: int):
-    init_db()  # Ensure table exists
     conn = get_db_connection()
     cursor = get_cursor(conn)
     
@@ -113,25 +112,37 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
     cursor.close()
     conn.close()
 
-def get_history(symbol: str, interval_minutes: int = 1):
-    init_db()
+def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = None):
     conn = get_db_connection()
     cursor = get_cursor(conn)
     
     interval_seconds = interval_minutes * 60
     p = get_placeholder()
     
-    query = f"""
-        SELECT 
-            (timestamp / {p}) * {p} AS interval_time,
-            price,
-            open_interest,
-            volume
-        FROM ticks
-        WHERE symbol = {p}
-        ORDER BY timestamp ASC
-    """
-    cursor.execute(query, (interval_seconds, interval_seconds, symbol))
+    if start_timestamp is not None:
+        query = f"""
+            SELECT 
+                (timestamp / {p}) * {p} AS interval_time,
+                price,
+                open_interest,
+                volume
+            FROM ticks
+            WHERE symbol = {p} AND timestamp >= {p}
+            ORDER BY timestamp ASC
+        """
+        cursor.execute(query, (interval_seconds, interval_seconds, symbol, start_timestamp))
+    else:
+        query = f"""
+            SELECT 
+                (timestamp / {p}) * {p} AS interval_time,
+                price,
+                open_interest,
+                volume
+            FROM ticks
+            WHERE symbol = {p}
+            ORDER BY timestamp ASC
+        """
+        cursor.execute(query, (interval_seconds, interval_seconds, symbol))
     rows = cursor.fetchall()
     
     cursor.close()

@@ -34,6 +34,18 @@ main_loop = None
 
 market_open_oi_cache = {}
 
+# In-memory result cache for get_unified_history: {symbol: (timestamp, data)}
+# TTL = 60 seconds (one candle period). Invalidated on each new live tick.
+_unified_history_cache: dict = {}
+_UNIFIED_HISTORY_TTL = 60  # seconds
+
+def invalidate_history_cache(symbol: str | None = None):
+    """Call this whenever a new tick arrives to flush the cache for that symbol."""
+    if symbol:
+        _unified_history_cache.pop(symbol, None)
+    else:
+        _unified_history_cache.clear()
+
 def broadcast_tick(tick_data):
     global main_loop
     if active_websockets and main_loop:
@@ -44,6 +56,8 @@ def broadcast_tick(tick_data):
                 tick_data["market_open_oi"] = get_market_open_oi(symbol, connector)
             except Exception as e:
                 print(f"Error injecting market_open_oi to tick: {e}")
+            # Invalidate cached history so next HTTP poll gets the new tick appended
+            invalidate_history_cache(symbol)
                 
         message = json.dumps(tick_data)
         for ws in list(active_websockets):
@@ -53,6 +67,7 @@ def broadcast_tick(tick_data):
                 )
             except Exception as e:
                 print(f"Error broadcasting to socket: {e}")
+
 
 @app.on_event("startup")
 def startup_event():
@@ -248,15 +263,19 @@ def generate_illiquid_prefill(start_price, target_price, high_price, low_price, 
     return candles
 
 def get_unified_history(symbol: str, connector):
-    from backend.database import get_history
     import time
+    # --- Result cache (60-second TTL, invalidated on new live tick) ---
+    cached = _unified_history_cache.get(symbol)
+    if cached:
+        cache_ts, cache_data = cached
+        if time.time() - cache_ts < _UNIFIED_HISTORY_TTL:
+            return cache_data
+
+    from backend.database import get_history
     import random
     from datetime import datetime, timezone, timedelta
     
-    # 1. Fetch real history from DB
-    real_ticks = get_history(symbol) # sorted by time ASC
-    
-    # 2. Get market open timestamp in IST
+    # 1. Get market open timestamp in IST
     # NCDEX session is Monday to Friday, starts at 10:00 AM IST.
     # If the current time is before 10:00 AM IST, the current session is the previous trading day.
     IST = timezone(timedelta(hours=5, minutes=30))
@@ -278,25 +297,28 @@ def get_unified_history(symbol: str, connector):
     market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
     
+    # Keep only the last 5 days of ticks
+    five_days_ago = market_open_epoch - 5 * 24 * 3600
+    
+    # 2. Fetch real history from DB (filtered to 5 days)
+    real_ticks = get_history(symbol, start_timestamp=five_days_ago) # sorted by time ASC
+    
     # Filter real ticks into today's session and past sessions
     session_ticks = [t for t in real_ticks if t["time"] >= market_open_epoch]
     past_ticks = [t for t in real_ticks if t["time"] < market_open_epoch]
-    
-    # Keep only the last 5 days of past ticks (5 * 24 * 3600 seconds)
-    five_days_ago = market_open_epoch - 5 * 24 * 3600
-    past_ticks = [t for t in past_ticks if t["time"] >= five_days_ago]
     
     # 3. Retrieve baseline information
     token = None
     if connector and "futures_symbols" in connector.settings and symbol in connector.settings["futures_symbols"]:
         token = connector.settings["futures_symbols"][symbol]["token"]
         
-    # Attempt to fetch a fresh quote from REST API to ensure baseline is 100% accurate
+    # Only fetch a REST quote when WSS is disconnected (WSS keeps market_data fresh in real-time)
     if token and connector and hasattr(connector, "update_market_data_from_quote"):
-        try:
-            connector.update_market_data_from_quote(symbol, token)
-        except Exception as e:
-            print(f"Error fetching fresh quote for baseline: {e}")
+        if not connector.connected:
+            try:
+                connector.update_market_data_from_quote(symbol, token)
+            except Exception as e:
+                print(f"Error fetching fresh quote for baseline: {e}")
             
     baseline = None
     if token and connector:
@@ -466,6 +488,8 @@ def get_unified_history(symbol: str, connector):
             t += 60
         
     unified = past_ticks + prefill_candles + session_ticks
+    import time as _t_cache
+    _unified_history_cache[symbol] = (_t_cache.time(), unified)
     return unified
 
 def get_market_open_oi(symbol: str, connector):
@@ -646,10 +670,10 @@ def get_historical_oi(symbol: str):
 @app.get("/api/angel-history")
 def get_angel_history(symbol: str):
     global connector
-    client_id = connector.settings.get("angel_client_id")
-    password = connector.settings.get("angel_password")
-    totp_secret = connector.settings.get("angel_totp_secret")
-    api_key = connector.settings.get("angel_api_key")
+    client_id = connector.get_setting("angel_client_id")
+    password = connector.get_setting("angel_password")
+    totp_secret = connector.get_setting("angel_totp_secret")
+    api_key = connector.get_setting("angel_api_key")
     
     if not all([client_id, password, totp_secret, api_key]):
         return {"status": "error", "message": "Angel One credentials not fully configured in settings."}
@@ -740,7 +764,7 @@ async def set_closing_data(data: dict):
     # 4. Broadcast to all connected WebSocket clients
     tick = connector.settings["eod_override"][token].copy()
     tick["type"] = "FUT"
-    tick["time"] = __import__("time").time()
+    tick["time"] = int(__import__("time").time())
     broadcast_tick(tick)
 
     return {"status": "success", "message": f"EOD data set for {symbol}",
@@ -792,4 +816,9 @@ def get_index():
     return response
 
 if __name__ == "__main__":
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=False)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    # On Render, bind to 0.0.0.0 so the reverse proxy can reach us.
+    # Locally, use 127.0.0.1 to avoid Windows IPv6 fallback latency.
+    host = "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1"
+    uvicorn.run("backend.main:app", host=host, port=port, reload=False)

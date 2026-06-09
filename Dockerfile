@@ -3,6 +3,8 @@ FROM python:3.11-slim
 # Prevent writing pyc files and buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Tell the app we're running on Render so it binds to 0.0.0.0
+ENV RENDER=true
 
 WORKDIR /app
 
@@ -17,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+# Render sets $PORT automatically; default to 8000 for local Docker runs
+EXPOSE ${PORT:-8000}
 
 CMD ["python", "backend/main.py"]

@@ -219,7 +219,7 @@ class AngelConnector:
             self._generate_single_mock_history(token, info)
 
     def _generate_single_mock_history(self, token, info):
-        now = time.time()
+        now = int(time.time())
         price = info["price"]
         oi = info["oi"]
         cum_vol = info["volume"]
@@ -387,23 +387,30 @@ class AngelConnector:
         return None
 
     def update_market_data_from_quote(self, symbol, token):
+        # Check if we already have data (from WSS or EOD override)
+        m_data = self.market_data.get(token) or self.settings.get("eod_override", {}).get(token)
+        if m_data and self.connected:
+            return m_data
+
         # Only fetch if we are in live mode and credentials exist
         if self.settings.get("mode") != "live":
-            return None
+            return m_data
             
         client_id = self.get_setting("angel_client_id")
         password = self.get_setting("angel_password")
         totp_secret = self.get_setting("angel_totp_secret")
         api_key = self.get_setting("angel_api_key")
         if not all([client_id, password, totp_secret, api_key]):
-            return None
+            return m_data
             
         # Avoid rate-limiting by caching quote for 30 seconds
-        now = time.time()
+        # Set the cache BEFORE the REST call so failures are also rate-limited
+        now = int(time.time())
         cache_key = f"quote_time_{token}"
         if hasattr(self, cache_key) and now - getattr(self, cache_key) < 30.0:
             return self.market_data.get(token)
-            
+        
+        setattr(self, cache_key, now)  # Claim the slot before any network call
         item = self.fetch_market_quote("NCDEX", token)
         if item:
             ltp = item.get("ltp", 0.0)
@@ -432,7 +439,6 @@ class AngelConnector:
                 }
             }
             self.market_data[token] = dash_tick
-            setattr(self, cache_key, now)
             return dash_tick
         return None
 
@@ -551,7 +557,7 @@ class AngelConnector:
                 "change": round(price - yest_close, 2),
                 "volume": volume,
                 "oi": oi,
-                "time": time.time(),
+                "time": int(time.time()),
                 "ohlc": {
                     "open": last_candle["open"],
                     "high": max(price, last_candle["high"]),
@@ -664,7 +670,7 @@ class AngelConnector:
                                                 "change": round(tick["ltp"] - tick["close"], 2),
                                                 "volume": tick["volume"],
                                                 "oi": tick["oi"],
-                                                "time": time.time(),
+                                                "time": int(time.time()),
                                                 "ohlc": {
                                                     "open": tick["open"],
                                                     "high": tick["high"],
