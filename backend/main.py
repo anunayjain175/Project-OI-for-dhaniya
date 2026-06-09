@@ -69,6 +69,17 @@ def broadcast_tick(tick_data):
                 print(f"Error broadcasting to socket: {e}")
 
 
+async def periodic_prune_task():
+    from backend.database import prune_ticks
+    import asyncio
+    while True:
+        try:
+            prune_ticks(days_to_keep=7)
+        except Exception as e:
+            print(f"Error in periodic database prune task: {e}")
+        # Run every 12 hours
+        await asyncio.sleep(12 * 3600)
+
 @app.on_event("startup")
 def startup_event():
     global connector, main_loop
@@ -78,6 +89,10 @@ def startup_event():
         init_db()
     except Exception as e:
         print(f"FastAPI: Database initialization failed: {e}")
+    
+    # Start the background database pruning task
+    main_loop.create_task(periodic_prune_task())
+    
     connector = AngelConnector(config_callback=broadcast_tick)
     connector.start(broadcast_tick)
     print("FastAPI: Started AngelConnector listener")

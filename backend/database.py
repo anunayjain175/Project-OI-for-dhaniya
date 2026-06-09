@@ -216,3 +216,23 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
             
     # Sort chronologically
     return sorted(candles.values(), key=lambda x: x["time"])
+
+def prune_ticks(days_to_keep: int = 7):
+    """Deletes ticks older than the specified number of days to prevent database bloat."""
+    conn = get_db_connection()
+    cursor = get_cursor(conn)
+    p = get_placeholder()
+    
+    cutoff_timestamp = int(time.time()) - (days_to_keep * 24 * 3600)
+    
+    try:
+        query = f"DELETE FROM ticks WHERE timestamp < {p}"
+        cursor.execute(query, (cutoff_timestamp,))
+        conn.commit()
+        print(f"Database: Pruned ticks older than {days_to_keep} days (before epoch {cutoff_timestamp}).")
+    except Exception as e:
+        print(f"Database: Error pruning ticks: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
