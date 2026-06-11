@@ -454,7 +454,7 @@ class OdinConnector:
         while self.running:
             try:
                 print(f"OdinConnector: Connecting to Live WSS Broker at {uri}")
-                async with websockets.connect(uri, ssl=ssl_context, open_timeout=10) as ws:
+                async with websockets.connect(uri, ssl=ssl_context, open_timeout=10, ping_interval=None) as ws:
                     self.websocket = ws
                     self.connected = True
                     print("OdinConnector: Connected to Live WFH WSS Server")

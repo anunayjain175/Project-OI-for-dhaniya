@@ -611,7 +611,7 @@ class AngelConnector:
                 }
                 
                 print(f"AngelConnector: Connecting to SmartStream WebSocket...")
-                async with websockets.connect(wss_url, extra_headers=wss_headers) as ws:
+                async with websockets.connect(wss_url, extra_headers=wss_headers, ping_interval=None) as ws:
                     self.websocket = ws
                     self.connected = True
                     print("AngelConnector: SmartStream WSS Connected!")
