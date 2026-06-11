@@ -98,7 +98,7 @@ def init_db():
 def is_market_hours(epoch: int) -> bool:
     """
     Returns True if the epoch timestamp (in IST) is within NCDEX market hours:
-    Monday to Friday, 10:00 AM to 5:00 PM IST (inclusive of 17:00 minute, up to 17:00:59).
+    Monday to Friday, 10:00 AM to 5:00 PM IST (exclusive of 5:00 PM, up to 16:59:59).
     """
     from datetime import datetime, timezone, timedelta, time
     IST = timezone(timedelta(hours=5, minutes=30))
@@ -110,7 +110,7 @@ def is_market_hours(epoch: int) -> bool:
         
     t = dt.time()
     start_time = time(10, 0, 0)
-    end_time = time(17, 1, 0) # Up to 17:00:59 IST
+    end_time = time(17, 0, 0) # Strictly before 5:00 PM IST
     
     return start_time <= t < end_time
 
@@ -122,30 +122,29 @@ def get_last_market_minute(epoch: int) -> int:
     IST = timezone(timedelta(hours=5, minutes=30))
     dt = datetime.fromtimestamp(epoch, tz=IST)
     
-    # If weekend, rewind to Friday 5:00 PM IST
+    # If weekend, rewind to Friday 4:59 PM IST
     if dt.weekday() == 5: # Saturday
-        dt = (dt - timedelta(days=1)).replace(hour=17, minute=0, second=0, microsecond=0)
+        dt = (dt - timedelta(days=1)).replace(hour=16, minute=59, second=0, microsecond=0)
         return int(dt.timestamp())
     elif dt.weekday() == 6: # Sunday
-        dt = (dt - timedelta(days=2)).replace(hour=17, minute=0, second=0, microsecond=0)
+        dt = (dt - timedelta(days=2)).replace(hour=16, minute=59, second=0, microsecond=0)
         return int(dt.timestamp())
         
     # If weekday, but before 10:00 AM:
-    # if Monday: go to Friday 5:00 PM
-    # else: go to yesterday 5:00 PM
+    # if Monday: go to Friday 4:59 PM
+    # else: go to yesterday 4:59 PM
     if dt.hour < 10:
         if dt.weekday() == 0: # Monday
-            dt = (dt - timedelta(days=3)).replace(hour=17, minute=0, second=0, microsecond=0)
+            dt = (dt - timedelta(days=3)).replace(hour=16, minute=59, second=0, microsecond=0)
         else:
-            dt = (dt - timedelta(days=1)).replace(hour=17, minute=0, second=0, microsecond=0)
+            dt = (dt - timedelta(days=1)).replace(hour=16, minute=59, second=0, microsecond=0)
         return int(dt.timestamp())
         
     # If weekday, but after 5:00 PM:
-    # Set to 17:00 of today
+    # Set to 16:59 of today
     if dt.hour >= 17:
-        if dt.hour > 17 or dt.minute > 0 or dt.second > 0:
-            dt = dt.replace(hour=17, minute=0, second=0, microsecond=0)
-            return int(dt.timestamp())
+        dt = dt.replace(hour=16, minute=59, second=0, microsecond=0)
+        return int(dt.timestamp())
             
     return epoch - (epoch % 60)
 

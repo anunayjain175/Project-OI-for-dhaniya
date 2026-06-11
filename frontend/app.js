@@ -72,12 +72,7 @@ function isMarketHours(epochSeconds) {
         return false;
     }
     const hours = date.getUTCHours();
-    const minutes = date.getUTCMinutes();
-    const seconds = date.getUTCSeconds();
-    if (hours < 10 || hours > 17) {
-        return false;
-    }
-    if (hours === 17 && (minutes > 0 || seconds > 0)) {
+    if (hours < 10 || hours >= 17) {
         return false;
     }
     return true;
