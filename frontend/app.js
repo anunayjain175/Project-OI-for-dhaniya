@@ -221,6 +221,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 6. Regular stats check (backup polling every 2s)
     console.log("App startup: starting backup stats polling...");
     setInterval(fetchStatsData, 2000);
+
+    // Diagnostic size checking after layout settling
+    setTimeout(() => {
+        const priceContainer = document.getElementById("price-chart");
+        const oiContainer = document.getElementById("oi-chart");
+        const priceCanvas = priceContainer ? priceContainer.querySelector("canvas") : null;
+        const oiCanvas = oiContainer ? oiContainer.querySelector("canvas") : null;
+        console.log(`DOM check: price-container=${priceContainer ? priceContainer.clientWidth : 0}x${priceContainer ? priceContainer.clientHeight : 0}, price-canvas=${priceCanvas ? `${priceCanvas.width}x${priceCanvas.height}` : "none"}`);
+        console.log(`DOM check: oi-container=${oiContainer ? oiContainer.clientWidth : 0}x${oiContainer ? oiContainer.clientHeight : 0}, oi-canvas=${oiCanvas ? `${oiCanvas.width}x${oiCanvas.height}` : "none"}`);
+    }, 2000);
 });
 
 // Event Listeners
