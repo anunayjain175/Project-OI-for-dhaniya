@@ -1110,6 +1110,7 @@ function handleLiveTick(tick) {
             return;
         }
         
+        const prevVolume = lastLiveVolume;
         lastLiveVolume = tick.volume;
         
         const offsetSeconds = 19800; // 5.5 hours for IST
@@ -1139,15 +1140,22 @@ function handleLiveTick(tick) {
 
         // 1. Aggregate timeframe price candlestick
         if (activeMinuteTime !== timeVal) {
-            // New interval has started! Set volume baseline to the previous minute's last volume
-            activeMinuteVolumeStart = tick.volume;
+            // New interval has started! Set volume baseline to the previous tick's volume to prevent data loss
+            if (prevVolume !== null && sameDay && !volumeReset) {
+                activeMinuteVolumeStart = prevVolume;
+            } else {
+                activeMinuteVolumeStart = 0;
+            }
             
             activeMinuteTime = timeVal;
             activeMinuteOpen = tick.price;
             activeMinuteHigh = tick.price;
             activeMinuteLow = tick.price;
             activeMinuteClose = tick.price;
-            activeMinuteVolume = 0;
+            
+            let diff = tick.volume - activeMinuteVolumeStart;
+            if (diff < 0) diff = tick.volume;
+            activeMinuteVolume = diff;
         } else {
             // Inside the same interval
             activeMinuteHigh = Math.max(activeMinuteHigh, tick.price);
