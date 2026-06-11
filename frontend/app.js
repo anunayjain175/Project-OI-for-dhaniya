@@ -93,6 +93,7 @@ let currentHistoryData = [];
 let isCrosshairActive = false;
 let raw1mHistory = [];
 let currentTimeframe = 1; // Default to 1-minute (1m) timeframe
+let isSyncingSuspended = false;
 
 
 // Charts Instances
@@ -258,6 +259,7 @@ function setupEventListeners() {
             }));
         }
 
+        isSyncingSuspended = true;
         // Clear existing chart data instead of destroying/recreating chart widgets to avoid DOM settle race conditions
         if (candlestickSeries) candlestickSeries.setData([]);
         if (volumeSeries) volumeSeries.setData([]);
@@ -412,23 +414,26 @@ function setupEventListeners() {
             btn.classList.add("active");
             const mins = parseInt(btn.getAttribute("data-minutes"));
             
+            isSyncingSuspended = true;
+            
             // Re-aggregate and render history with the selected timeframe
             applyTimeframe(mins);
             
-            // Re-initialize chart sync to ensure callbacks are properly bound
-            setupChartSynchronization();
-
             // Force timescale refresh so it rescales correctly
             priceChart.timeScale().fitContent();
-            oiChart.timeScale().fitContent();
             
             // Sync the visible logical range after a tiny delay to allow the layout to calculate
             setTimeout(() => {
-                const range = priceChart.timeScale().getVisibleLogicalRange();
-                if (range) {
-                    oiChart.timeScale().setVisibleLogicalRange(range);
+                if (priceChart && oiChart) {
+                    const range = priceChart.timeScale().getVisibleLogicalRange();
+                    if (range) {
+                        oiChart.timeScale().setVisibleLogicalRange(range);
+                    }
                 }
-            }, 50);
+                setTimeout(() => {
+                    isSyncingSuspended = false;
+                }, 150);
+            }, 100);
         });
     });
 }
@@ -644,21 +649,21 @@ function setupChartSynchronization() {
 
     // Define new handlers
     priceLogicalRangeChangeHandler = (range) => {
-        if (isSyncing || !range) return;
+        if (isSyncingSuspended || isSyncing || !range) return;
         isSyncing = true;
         oiChart.timeScale().setVisibleLogicalRange(range);
         isSyncing = false;
     };
 
     oiLogicalRangeChangeHandler = (range) => {
-        if (isSyncing || !range) return;
+        if (isSyncingSuspended || isSyncing || !range) return;
         isSyncing = true;
         priceChart.timeScale().setVisibleLogicalRange(range);
         isSyncing = false;
     };
 
     priceCrosshairMoveHandler = (param) => {
-        if (isSyncing) return;
+        if (isSyncingSuspended || isSyncing) return;
         isSyncing = true;
         if (param.time) {
             oiChart.setCrosshairPosition(0, param.time, oiSeries);
@@ -673,7 +678,7 @@ function setupChartSynchronization() {
     };
 
     oiCrosshairMoveHandler = (param) => {
-        if (isSyncing) return;
+        if (isSyncingSuspended || isSyncing) return;
         isSyncing = true;
         if (param.time) {
             priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
@@ -723,6 +728,8 @@ function initOIChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
+            fixRightEdge: true,
+            fixLeftEdge: true,
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
@@ -897,6 +904,7 @@ function applyTimeframe(timeframeMinutes) {
 
 // Load historical price & OI data
 async function loadOIHistory(symbol) {
+    isSyncingSuspended = true;
     try {
         // 1. Fetch real historical data from local/cloud database
         let oiList = [];
@@ -960,7 +968,8 @@ async function loadOIHistory(symbol) {
         }
         
         priceChart.timeScale().fitContent();
-        oiChart.timeScale().fitContent();
+        
+        // Sync the visible logical range after a tiny delay to allow the layout to calculate
         setTimeout(() => {
             if (priceChart && oiChart) {
                 const range = priceChart.timeScale().getVisibleLogicalRange();
@@ -968,11 +977,15 @@ async function loadOIHistory(symbol) {
                     oiChart.timeScale().setVisibleLogicalRange(range);
                 }
             }
-        }, 250);
+            setTimeout(() => {
+                isSyncingSuspended = false;
+            }, 150);
+        }, 100);
         
         clearLegendValues();
     } catch (err) {
         console.error("Error loading history:", err);
+        isSyncingSuspended = false;
     }
 }
 

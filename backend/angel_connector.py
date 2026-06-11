@@ -657,16 +657,16 @@ class AngelConnector:
                                 continue
                             
                             frame_count += 1
-                            if frame_count % 20 == 1:
-                                print(f"AngelConnector WSS: Received frame #{frame_count}, type={type(frame)}, len={len(frame) if hasattr(frame, '__len__') else 'N/A'}")
+                            # if frame_count % 20 == 1:
+                            #     print(f"AngelConnector WSS: Received frame #{frame_count}, type={type(frame)}, len={len(frame) if hasattr(frame, '__len__') else 'N/A'}")
                                 
                             if isinstance(frame, bytes):
                                 tick = parse_smart_stream_binary(frame)
                                 if tick:
                                     tick_count += 1
                                     tick_token = tick["token"]
-                                    if tick_count % 20 == 1:
-                                        print(f"AngelConnector WSS: Parsed tick #{tick_count} for token={tick_token}, ltp={tick['ltp']}, oi={tick['oi']}")
+                                    # if tick_count % 20 == 1:
+                                    #     print(f"AngelConnector WSS: Parsed tick #{tick_count} for token={tick_token}, ltp={tick['ltp']}, oi={tick['oi']}")
                                     
                                     # Find matching symbol name from our token_map
                                     match_symbol = None
@@ -686,8 +686,8 @@ class AngelConnector:
                                         # If this tick matches the active contract, update UI panels
                                         target_symbol = self.settings["active_symbol"]
                                         if match_symbol == target_symbol:
-                                            if tick_count % 5 == 1:
-                                                print(f"AngelConnector WSS: Active tick match: ltp={tick['ltp']} volume={tick['volume']} oi={tick['oi']}")
+                                            # if tick_count % 5 == 1:
+                                            #     print(f"AngelConnector WSS: Active tick match: ltp={tick['ltp']} volume={tick['volume']} oi={tick['oi']}")
                                             yest_close = tick["close"] - (tick["ltp"] * (tick["oi_change_pct"] / 100.0) if tick["oi_change_pct"] else 0.0)
                                             dash_tick = {
                                                 "token": tick_token,
