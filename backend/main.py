@@ -19,6 +19,9 @@ class DualLogger:
     def flush(self):
         self.stream.flush()
 
+    def __getattr__(self, attr):
+        return getattr(self.stream, attr)
+
 sys.stdout = DualLogger(sys.stdout)
 sys.stderr = DualLogger(sys.stderr, prefix="[ERROR] ")
 
