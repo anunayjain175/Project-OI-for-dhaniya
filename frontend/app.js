@@ -1017,6 +1017,7 @@ function connectWebSocket() {
 // Handle incoming websocket ticks
 function handleLiveTick(tick) {
     if (tick.symbol === currentSymbol) {
+        console.log(`Client WS: Received tick for ${tick.symbol} - Price: ${tick.price}, OI: ${tick.oi}`);
         // Update broker status immediately since we are receiving live data
         if (tick.hasOwnProperty("broker_connected")) {
             updateBrokerBadge(tick.broker_connected);
