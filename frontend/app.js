@@ -83,6 +83,17 @@ function isMarketHours(epochSeconds) {
     return true;
 }
 
+// Check if two epoch seconds represent the same day in IST
+function isSameDayIST(epochSeconds1, epochSeconds2) {
+    if (!epochSeconds1 || !epochSeconds2) return false;
+    const offsetSeconds = 19800; // 5.5 hours for IST
+    const date1 = new Date((epochSeconds1 + offsetSeconds) * 1000);
+    const date2 = new Date((epochSeconds2 + offsetSeconds) * 1000);
+    return date1.getUTCDate() === date2.getUTCDate() &&
+           date1.getUTCMonth() === date2.getUTCMonth() &&
+           date1.getUTCFullYear() === date2.getUTCFullYear();
+}
+
 // Global State
 let socket = null;
 let currentSymbol = "JEERA-FUT";
@@ -110,6 +121,8 @@ let startingOI = null;
 let yesterdayClose = 0.0;
 let lastOITick = 0;
 let lastPriceTick = 0.0;
+let lastLiveVolume = null;
+let lastLiveTime = null;
 
 // State variables for active 1-minute candle aggregation
 let activeMinuteTime = null;
@@ -241,6 +254,10 @@ function setupEventListeners() {
         currentSymbol = e.target.value;
         if (!currentSymbol) return;
         chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
+
+        // Reset trade activity baselines
+        lastLiveVolume = null;
+        lastLiveTime = null;
 
         // Reset active 1-minute candle tracking state
         activeMinuteTime = null;
@@ -979,6 +996,14 @@ async function loadOIHistory(symbol) {
         
         priceChart.timeScale().fitContent();
         
+        if (raw1mHistory && raw1mHistory.length > 0) {
+            lastLiveVolume = raw1mHistory[raw1mHistory.length - 1].volume;
+            lastLiveTime = raw1mHistory[raw1mHistory.length - 1].time;
+        } else {
+            lastLiveVolume = null;
+            lastLiveTime = null;
+        }
+        
         // Sync the visible logical range after a tiny delay to allow the layout to calculate
         setTimeout(() => {
             if (priceChart && oiChart) {
@@ -1056,6 +1081,36 @@ function handleLiveTick(tick) {
             // Ignore ticks for chart rendering if they occur outside market hours
             return;
         }
+
+        // Check if this is a trade tick (volume changed, reset occurred, or first tick)
+        const sameDay = isSameDayIST(tick.time, lastLiveTime);
+        const volumeIncreased = lastLiveVolume !== null && tick.volume > lastLiveVolume;
+        const volumeReset = lastLiveVolume !== null && tick.volume < lastLiveVolume;
+        
+        lastLiveTime = tick.time;
+        
+        if (lastLiveVolume !== null && sameDay && !volumeReset && !volumeIncreased) {
+            // No new trade. We do NOT update the candlestick or volume series on the chart.
+            // But we STILL update the OI series and the UI panels.
+            if (oiSeries && activeMinuteTime !== null) {
+                oiSeries.update({
+                    time: activeMinuteTime,
+                    value: tick.oi
+                });
+            }
+            
+            let dataPoint = currentHistoryData.find(d => d.time === activeMinuteTime);
+            if (dataPoint) {
+                dataPoint.oi = tick.oi;
+            }
+            
+            if (!isCrosshairActive) {
+                clearLegendValues();
+            }
+            return;
+        }
+        
+        lastLiveVolume = tick.volume;
         
         const offsetSeconds = 19800; // 5.5 hours for IST
         const intervalSeconds = currentTimeframe * 60;

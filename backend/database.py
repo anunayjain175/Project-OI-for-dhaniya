@@ -156,41 +156,88 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
         
     conn = get_db_connection()
     cursor = get_cursor(conn)
-    
-    # Check if we already have a tick for this token in the current minute to avoid bloat
-    current_minute = now - (now % 60)
     p = get_placeholder()
     
-    query = f"""
+    # 1. Fetch the last recorded tick overall for this token (to get baseline volume/price)
+    query_prev = f"""
+        SELECT open, high, low, close, open_interest, volume, timestamp FROM ticks
+        WHERE token = {p}
+        ORDER BY timestamp DESC LIMIT 1
+    """
+    cursor.execute(query_prev, (token,))
+    prev_tick = cursor.fetchone()
+    
+    # 2. Check if we already have a tick for this token in the current minute
+    current_minute = now - (now % 60)
+    query_curr = f"""
         SELECT id, open, high, low, close, open_interest, volume FROM ticks 
         WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
         ORDER BY timestamp DESC LIMIT 1
     """
-    cursor.execute(query, (token, current_minute, current_minute + 60))
-    row = cursor.fetchone()
+    cursor.execute(query_curr, (token, current_minute, current_minute + 60))
+    curr_tick = cursor.fetchone()
     
-    if row:
-        # Update existing tick: keep open, adjust high/low, set close to current price
-        new_high = max(row["high"], price)
-        new_low = min(row["low"], price)
-        update_query = f"""
-            UPDATE ticks SET 
-                timestamp = {p},
-                high = {p},
-                low = {p},
-                close = {p},
-                open_interest = {p},
-                volume = {p}
-            WHERE id = {p}
-        """
-        cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, row["id"]))
+    if curr_tick:
+        # We are updating the current minute's tick
+        if prev_tick and volume > prev_tick["volume"]:
+            # This is a trade tick!
+            if curr_tick["volume"] == prev_tick["volume"]:
+                # This is the first trade of the minute! Overwrite the placeholder values.
+                update_query = f"""
+                    UPDATE ticks SET 
+                        timestamp = {p},
+                        open = {p},
+                        high = {p},
+                        low = {p},
+                        close = {p},
+                        open_interest = {p},
+                        volume = {p}
+                    WHERE id = {p}
+                """
+                cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, curr_tick["id"]))
+            else:
+                # Standard update within the same minute
+                new_high = max(curr_tick["high"], price)
+                new_low = min(curr_tick["low"], price)
+                update_query = f"""
+                    UPDATE ticks SET 
+                        timestamp = {p},
+                        high = {p},
+                        low = {p},
+                        close = {p},
+                        open_interest = {p},
+                        volume = {p}
+                    WHERE id = {p}
+                """
+                cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, curr_tick["id"]))
+        else:
+            # Standard heartbeat/no-trade update: just update close, OI, and volume
+            update_query = f"""
+                UPDATE ticks SET 
+                    timestamp = {p},
+                    close = {p},
+                    open_interest = {p},
+                    volume = {p}
+                WHERE id = {p}
+            """
+            cursor.execute(update_query, (now, price, open_interest, volume, curr_tick["id"]))
     else:
-        # Insert a new tick for the minute: open=high=low=close=price
-        insert_query = f"""
-            INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
-            VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
-        """
-        cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume))
+        # We are inserting a new minute tick
+        if prev_tick and volume <= prev_tick["volume"]:
+            # Insert a placeholder candle at the previous close price (no trades occurred yet)
+            prev_close = prev_tick["close"]
+            insert_query = f"""
+                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+            """
+            cursor.execute(insert_query, (now, symbol, token, prev_close, prev_close, prev_close, prev_close, open_interest, prev_tick["volume"]))
+        else:
+            # Insert a new trading candle
+            insert_query = f"""
+                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+            """
+            cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume))
         
     conn.commit()
     cursor.close()
