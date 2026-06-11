@@ -248,21 +248,12 @@ function setupEventListeners() {
             }));
         }
 
-        // Refresh Price Chart, and load new history (do NOT fetchConfig to avoid race conditions overriding activeSymbol)
-        initPriceChart();
-        initOIChart();
-        setupChartSynchronization();
-        await loadOIHistory(currentSymbol);
+        // Clear existing chart data instead of destroying/recreating chart widgets to avoid DOM settle race conditions
+        if (candlestickSeries) candlestickSeries.setData([]);
+        if (volumeSeries) volumeSeries.setData([]);
+        if (oiSeries) oiSeries.setData([]);
         
-        // Final synchronization check after history load completes
-        setTimeout(() => {
-            if (priceChart && oiChart) {
-                const range = priceChart.timeScale().getVisibleLogicalRange();
-                if (range) {
-                    oiChart.timeScale().setVisibleLogicalRange(range);
-                }
-            }
-        }, 150);
+        await loadOIHistory(currentSymbol);
         
         await fetchStatsData();
     });
