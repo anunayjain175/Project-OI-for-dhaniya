@@ -476,8 +476,11 @@ class AngelConnector:
                 
         symbol_token_map = {}
         
+        preview = ""
         try:
-            with open(INSTRUMENT_MASTER_PATH, "r") as f:
+            with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
+                preview = f.read(150)
+                f.seek(0)
                 scrip_master = json.load(f)
                 
             # Scan scrip master in a single pass
@@ -494,7 +497,11 @@ class AngelConnector:
                                 
             print(f"AngelConnector: Successfully resolved {len(symbol_token_map)} NCDEX tokens.")
         except Exception as e:
-            print(f"AngelConnector: Error resolving all tokens: {e}")
+            try:
+                size = os.path.getsize(INSTRUMENT_MASTER_PATH)
+            except:
+                size = "unknown"
+            print(f"AngelConnector: Error resolving all tokens: {e}. File size: {size} bytes. Preview: {repr(preview)}")
             
         self.symbol_token_map = symbol_token_map
         return symbol_token_map
@@ -711,7 +718,8 @@ class AngelConnector:
 def fetch_and_cache_scrip_master():
     url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
     try:
-        if os.path.exists(INSTRUMENT_MASTER_PATH):
+        # Check if file exists, is large enough (> 1MB), and was updated in the last 24h
+        if os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024 * 1024:
             mtime = os.path.getmtime(INSTRUMENT_MASTER_PATH)
             if time.time() - mtime < 86400:
                 return True
@@ -719,12 +727,15 @@ def fetch_and_cache_scrip_master():
         print("AngelConnector: Downloading fresh scrip master from margincalculator...")
         r = requests.get(url, timeout=25)
         if r.status_code == 200:
-            with open(INSTRUMENT_MASTER_PATH, "w") as f:
+            with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
                 f.write(r.text)
+            print(f"AngelConnector: Downloaded and saved scrip master ({len(r.text)} bytes)")
             return True
     except Exception as e:
         print(f"AngelConnector: Failed to update scrip master: {e}")
-    return os.path.exists(INSTRUMENT_MASTER_PATH)
+    
+    # Final fallback check: if file exists and is > 1MB
+    return os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024 * 1024
 
 def resolve_angel_token(symbol_name):
     if not fetch_and_cache_scrip_master():
@@ -741,8 +752,11 @@ def resolve_angel_token(symbol_name):
     target_match_suffix1 = f"{month}{year_two_digits}"
     target_match_suffix2 = f"{month}20{year_two_digits}"
     
+    preview = ""
     try:
-        with open(INSTRUMENT_MASTER_PATH, "r") as f:
+        with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
+            preview = f.read(150)
+            f.seek(0)
             scrip_master = json.load(f)
             
         for item in scrip_master:
@@ -752,5 +766,9 @@ def resolve_angel_token(symbol_name):
                     print(f"AngelConnector: Resolved {symbol_name} -> token {item.get('token')} ({sym})")
                     return item.get("token")
     except Exception as e:
-        print(f"AngelConnector: Token resolution error: {e}")
+        try:
+            size = os.path.getsize(INSTRUMENT_MASTER_PATH)
+        except:
+            size = "unknown"
+        print(f"AngelConnector: Token resolution error: {e}. File size: {size} bytes. Preview: {repr(preview)}")
     return None
