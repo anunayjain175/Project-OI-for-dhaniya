@@ -1,5 +1,27 @@
 import sys
 import os
+import collections
+from datetime import datetime
+
+shared_log_buffer = collections.deque(maxlen=300)
+
+class DualLogger:
+    def __init__(self, stream, prefix=""):
+        self.stream = stream
+        self.prefix = prefix
+
+    def write(self, message):
+        self.stream.write(message)
+        if message.strip():
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            shared_log_buffer.append(f"[{timestamp}] {self.prefix}{message.strip()}")
+
+    def flush(self):
+        self.stream.flush()
+
+sys.stdout = DualLogger(sys.stdout)
+sys.stderr = DualLogger(sys.stderr, prefix="[ERROR] ")
+
 # Add parent directory to sys.path to resolve 'backend' imports correctly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -712,6 +734,10 @@ def get_historical_oi(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/logs")
+def get_logs():
+    return make_nocache_response(list(shared_log_buffer))
 
 @app.get("/api/angel-history")
 def get_angel_history(symbol: str):
