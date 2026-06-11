@@ -84,6 +84,8 @@ def broadcast_tick(tick_data):
             # Invalidate cached history so next HTTP poll gets the new tick appended
             invalidate_history_cache(symbol)
                 
+        # Inject broker connection status
+        tick_data["broker_connected"] = connector.connected if connector else False
         message = json.dumps(tick_data)
         for ws in list(active_websockets):
             try:
@@ -737,6 +739,16 @@ def get_historical_oi(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/client-log")
+async def client_log(data: dict):
+    message = data.get("message", "")
+    level = data.get("level", "INFO")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_msg = f"[CLIENT {level}] {message}"
+    shared_log_buffer.append(f"[{timestamp}] {log_msg}")
+    print(log_msg)
+    return {"status": "success"}
 
 @app.get("/api/logs")
 def get_logs():

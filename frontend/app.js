@@ -1,12 +1,46 @@
+// Setup client-side logging back to the server
+const originalLog = console.log;
+const originalError = console.error;
+let isSendingLog = false;
+
+async function sendClientLog(level, message) {
+    if (isSendingLog) return;
+    isSendingLog = true;
+    try {
+        await fetch("/api/client-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ level, message })
+        });
+    } catch (e) {
+        originalError.call(console, "Failed to send client log:", e);
+    } finally {
+        isSendingLog = false;
+    }
+}
+
+console.log = function(...args) {
+    originalLog.apply(console, args);
+    sendClientLog('INFO', args.join(' '));
+};
+console.error = function(...args) {
+    originalError.apply(console, args);
+    sendClientLog('ERROR', args.join(' '));
+};
+
 window.addEventListener('error', function(event) {
     const msg = event.message || '';
     if (msg.includes('ResizeObserver loop') || msg.includes('Script error')) {
         return;
     }
-    showErrorBanner('JS Error: ' + msg + '\nSource: ' + event.filename + ':' + event.lineno + ':' + event.colno);
+    const errMsg = 'JS Error: ' + msg + '\nSource: ' + event.filename + ':' + event.lineno + ':' + event.colno;
+    showErrorBanner(errMsg);
+    sendClientLog('ERROR', errMsg);
 });
 window.addEventListener('unhandledrejection', function(event) {
-    showErrorBanner('JS Promise Rejection: ' + event.reason + (event.reason && event.reason.stack ? '\nStack: ' + event.reason.stack : ''));
+    const errMsg = 'JS Promise Rejection: ' + event.reason + (event.reason && event.reason.stack ? '\nStack: ' + event.reason.stack : '');
+    showErrorBanner(errMsg);
+    sendClientLog('ERROR', errMsg);
 });
 
 function showErrorBanner(message) {
@@ -160,26 +194,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     tabContents = document.querySelectorAll(".tab-content");
 
     // 1. Fetch config settings
+    console.log("App startup: fetching config...");
     await fetchConfig();
     if (chartSymbolNameEl && currentSymbol) {
         chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
     }
     
     // 2. Initialize Lightweight Price Chart & OI Chart
+    console.log("App startup: initializing Lightweight charts...");
     initPriceChart();
     initOIChart();
     setupChartSynchronization();
     
     // 3. Setup Events
+    console.log("App startup: setting up event listeners...");
     setupEventListeners();
     
     // 4. Fetch initial OI chart history
+    console.log(`App startup: loading history for ${currentSymbol}...`);
     await loadOIHistory(currentSymbol);
     
     // 5. Connect WebSocket
+    console.log("App startup: connecting websocket...");
     connectWebSocket();
     
     // 6. Regular stats check (backup polling every 2s)
+    console.log("App startup: starting backup stats polling...");
     setInterval(fetchStatsData, 2000);
 });
 
@@ -977,6 +1017,13 @@ function connectWebSocket() {
 // Handle incoming websocket ticks
 function handleLiveTick(tick) {
     if (tick.symbol === currentSymbol) {
+        // Update broker status immediately since we are receiving live data
+        if (tick.hasOwnProperty("broker_connected")) {
+            updateBrokerBadge(tick.broker_connected);
+        } else {
+            updateBrokerBadge(true);
+        }
+
         // Update stats UI panels (always, even after hours or on weekends)
         updateUIPanels(tick);
         
@@ -1098,6 +1145,11 @@ function handleLiveTick(tick) {
 // Regular stats fetch (backup polling)
 async function fetchStatsData() {
     try {
+        if (!window.fetchStatsCount) window.fetchStatsCount = 0;
+        window.fetchStatsCount++;
+        if (window.fetchStatsCount % 10 === 1) {
+            console.log(`Polling stats data for: ${currentSymbol}...`);
+        }
         const res = await fetch(`/api/futures-data?symbol=${encodeURIComponent(currentSymbol)}&_=${Date.now()}`);
         const stats = await res.json();
         
