@@ -740,7 +740,8 @@ def get_historical_oi(symbol: str):
 
 @app.get("/api/logs")
 def get_logs():
-    return make_nocache_response(list(shared_log_buffer))
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\n".join(list(shared_log_buffer)))
 
 @app.get("/api/angel-history")
 def get_angel_history(symbol: str):
