@@ -140,51 +140,57 @@ class OdinConnector:
             return []
 
     def _generate_single_mock_history(self, token, info):
+        from backend.database import is_market_hours, get_last_market_minute
         now = time.time()
         price = info["price"]
         oi = info["oi"]
         history = []
-        for i in range(150):
-            timestamp = now - i * 60
-            
-            if i == 0:
-                # The latest candle matches the actual broker/exchange closing values exactly
-                open_p = info["open"]
-                high_p = info["high"]
-                low_p = info["low"]
-                close_p = info["price"]
-                vol = info["volume"]
-            else:
-                # Walk backwards in time to create historical candles
-                open_p = price
-                close_p = price
-                high_variation = max(0, random.normalvariate(1 if price > 10000 else 0.3, 1.2 if price > 10000 else 0.4))
-                low_variation = max(0, random.normalvariate(1 if price > 10000 else 0.3, 1.2 if price > 10000 else 0.4))
-                high_p = price + high_variation
-                low_p = price - low_variation
-                vol = random.randint(10, 150) if price > 10000 else random.randint(1, 15)
+        
+        # Step back in time, skipping off-market minutes
+        t = get_last_market_minute(now)
+        count = 0
+        while count < 150:
+            if is_market_hours(t):
+                if count == 0:
+                    # The latest candle matches the actual broker/exchange closing values exactly
+                    open_p = info["open"]
+                    high_p = info["high"]
+                    low_p = info["low"]
+                    close_p = info["price"]
+                    vol = info["volume"]
+                else:
+                    # Walk backwards in time to create historical candles
+                    open_p = price
+                    close_p = price
+                    high_variation = max(0, random.normalvariate(1 if price > 10000 else 0.3, 1.2 if price > 10000 else 0.4))
+                    low_variation = max(0, random.normalvariate(1 if price > 10000 else 0.3, 1.2 if price > 10000 else 0.4))
+                    high_p = price + high_variation
+                    low_p = price - low_variation
+                    vol = random.randint(10, 150) if price > 10000 else random.randint(1, 15)
+                    
+                history.append({
+                    "time": t,
+                    "open": round(open_p, 2),
+                    "high": round(high_p, 2),
+                    "low": round(low_p, 2),
+                    "close": round(close_p, 2),
+                    "oi": int(oi),
+                    "volume": int(vol)
+                })
                 
-            history.append({
-                "time": timestamp,
-                "open": round(open_p, 2),
-                "high": round(high_p, 2),
-                "low": round(low_p, 2),
-                "close": round(close_p, 2),
-                "oi": int(oi),
-                "volume": int(vol)
-            })
-            
-            # Determine previous step value by walking backwards
-            change_scale = 4.0 if price > 10000 else 1.0
-            change = random.normalvariate(0, change_scale)
-            price = price - change
-            
-            oi_scale = 1000 if oi > 100000 else 10
-            oi_change = int(random.normalvariate(oi_scale, oi_scale * 3))
-            if change < 0 and random.random() > 0.4:
-                oi_change = -int(random.normalvariate(oi_scale / 2, oi_scale * 1.5))
-            
-            oi = max(int(info["oi"] * 0.2), oi - oi_change)
+                # Determine previous step value by walking backwards
+                change_scale = 4.0 if price > 10000 else 1.0
+                change = random.normalvariate(0, change_scale)
+                price = price - change
+                
+                oi_scale = 1000 if oi > 100000 else 10
+                oi_change = int(random.normalvariate(oi_scale, oi_scale * 3))
+                if change < 0 and random.random() > 0.4:
+                    oi_change = -int(random.normalvariate(oi_scale / 2, oi_scale * 1.5))
+                
+                oi = max(int(info["oi"] * 0.2), oi - oi_change)
+                count += 1
+            t -= 60
             
         history.reverse()
         self.mock_history[token] = history

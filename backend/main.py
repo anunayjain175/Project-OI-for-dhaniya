@@ -112,7 +112,9 @@ def health_check():
 @app.get("/api/config")
 def get_config():
     global connector
-    return connector.settings
+    res = connector.settings.copy()
+    res["broker_connected"] = connector.connected if connector else False
+    return res
 
 COMMODITY_NAMES = {
     "BAJRA": "Bajra",
@@ -688,6 +690,8 @@ def get_futures_data(symbol: str = None):
                         "market_open_oi": market_open_oi,
                         "ohlc": {"open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0, "yesterday_close": 0.0}
                     }
+    if res_data:
+        res_data["broker_connected"] = connector.connected if connector else False
     return make_nocache_response(res_data)
 
 @app.get("/api/historical-candles")

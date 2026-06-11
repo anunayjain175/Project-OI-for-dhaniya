@@ -28,6 +28,27 @@ function showErrorBanner(message) {
     document.body.appendChild(errorBanner);
 }
 
+// Check if epoch seconds (UTC) represents NCDEX market hours in IST (10:00 AM to 5:00 PM on weekdays)
+function isMarketHours(epochSeconds) {
+    if (!epochSeconds) return false;
+    // IST is UTC + 5.5 hours (19800 seconds)
+    const date = new Date((epochSeconds + 19800) * 1000);
+    const day = date.getUTCDay();
+    if (day === 0 || day === 6) {
+        return false;
+    }
+    const hours = date.getUTCHours();
+    const minutes = date.getUTCMinutes();
+    const seconds = date.getUTCSeconds();
+    if (hours < 10 || hours > 17) {
+        return false;
+    }
+    if (hours === 17 && (minutes > 0 || seconds > 0)) {
+        return false;
+    }
+    return true;
+}
+
 // Global State
 let socket = null;
 let currentSymbol = "JEERA-FUT";
@@ -68,6 +89,7 @@ let activeMinuteVolume = 0;
 let symbolSelect;
 let modeBadge;
 let connectionBadge;
+let brokerBadge;
 let settingsBtn;
 let settingsModal;
 let closeModalBtn;
@@ -105,6 +127,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     symbolSelect = document.getElementById("symbol-select");
     modeBadge = document.getElementById("mode-badge");
     connectionBadge = document.getElementById("connection-badge");
+    brokerBadge = document.getElementById("broker-badge");
     settingsBtn = document.getElementById("settings-btn");
     settingsModal = document.getElementById("settings-modal");
     closeModalBtn = document.getElementById("close-modal-btn");
@@ -385,6 +408,9 @@ async function fetchConfig() {
         config = await res.json();
         currentSymbol = config.active_symbol || "";
 
+        // Update broker status
+        updateBrokerBadge(config.broker_connected);
+
         // Update mode badge
         if (config.mode === "live") {
             modeBadge.className = "badge badge-live";
@@ -470,6 +496,8 @@ function initPriceChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
+            fixRightEdge: true,
+            fixLeftEdge: true,
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
@@ -711,14 +739,18 @@ function applyTimeframe(timeframeMinutes) {
     
     if (!raw1mHistory || raw1mHistory.length === 0) return;
     
+    // Filter history to strictly keep market trading hours (10 AM to 5 PM IST weekdays)
+    const filteredHistory = raw1mHistory.filter(c => isMarketHours(c.time));
+    if (filteredHistory.length === 0) return;
+    
     const intervalSeconds = timeframeMinutes * 60;
     const offsetSeconds = 19800; // 5.5 hours for IST
     
     // 1. Pre-calculate 1-minute incremental volumes
-    const ticks1m = raw1mHistory.map((c, i) => {
+    const ticks1m = filteredHistory.map((c, i) => {
         let diff = 0;
         if (i > 0) {
-            const prevD = new Date(raw1mHistory[i - 1].time * 1000);
+            const prevD = new Date(filteredHistory[i - 1].time * 1000);
             const currD = new Date(c.time * 1000);
             const isSameDay = prevD.getUTCFullYear() === currD.getUTCFullYear() &&
                               prevD.getUTCMonth() === currD.getUTCMonth() &&
@@ -726,7 +758,7 @@ function applyTimeframe(timeframeMinutes) {
             if (!isSameDay) {
                 diff = c.volume;
             } else {
-                diff = c.volume - raw1mHistory[i - 1].volume;
+                diff = c.volume - filteredHistory[i - 1].volume;
             }
         } else {
             diff = c.volume;
@@ -945,6 +977,14 @@ function connectWebSocket() {
 // Handle incoming websocket ticks
 function handleLiveTick(tick) {
     if (tick.symbol === currentSymbol) {
+        // Update stats UI panels (always, even after hours or on weekends)
+        updateUIPanels(tick);
+        
+        if (!isMarketHours(tick.time)) {
+            // Ignore ticks for chart rendering if they occur outside market hours
+            return;
+        }
+        
         const offsetSeconds = 19800; // 5.5 hours for IST
         const intervalSeconds = currentTimeframe * 60;
         const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % intervalSeconds) + offsetSeconds;
@@ -1052,9 +1092,6 @@ function handleLiveTick(tick) {
         if (!isCrosshairActive) {
             clearLegendValues();
         }
-        
-        // Update UI panels with stats
-        updateUIPanels(tick);
     }
 }
 
@@ -1064,15 +1101,29 @@ async function fetchStatsData() {
         const res = await fetch(`/api/futures-data?symbol=${encodeURIComponent(currentSymbol)}&_=${Date.now()}`);
         const stats = await res.json();
         
-        if (stats && stats.price > 0) {
-            updateUIPanels(stats);
-            
-            if (!startingOI && stats.oi > 0) {
-                startingOI = stats.oi;
+        if (stats) {
+            updateBrokerBadge(stats.broker_connected);
+            if (stats.price > 0) {
+                updateUIPanels(stats);
+                
+                if (!startingOI && stats.oi > 0) {
+                    startingOI = stats.oi;
+                }
             }
         }
     } catch (err) {
         console.error("Error fetching stats data:", err);
+    }
+}
+
+function updateBrokerBadge(connected) {
+    if (!brokerBadge) return;
+    if (connected) {
+        brokerBadge.className = "badge badge-connected";
+        brokerBadge.innerHTML = '<i class="fa-solid fa-key"></i> BROKER CONNECTED';
+    } else {
+        brokerBadge.className = "badge badge-disconnected";
+        brokerBadge.innerHTML = '<i class="fa-solid fa-key"></i> BROKER DISCONNECTED';
     }
 }
 

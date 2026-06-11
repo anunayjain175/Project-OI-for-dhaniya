@@ -95,11 +95,67 @@ def init_db():
     conn.close()
     print(f"Database initialized. Type: {'PostgreSQL' if is_postgres() else 'SQLite'}")
 
+def is_market_hours(epoch: int) -> bool:
+    """
+    Returns True if the epoch timestamp (in IST) is within NCDEX market hours:
+    Monday to Friday, 10:00 AM to 5:00 PM IST (inclusive of 17:00 minute, up to 17:00:59).
+    """
+    from datetime import datetime, timezone, timedelta, time
+    IST = timezone(timedelta(hours=5, minutes=30))
+    dt = datetime.fromtimestamp(epoch, tz=IST)
+    
+    # Monday = 0, Friday = 4, Saturday = 5, Sunday = 6
+    if dt.weekday() > 4:
+        return False
+        
+    t = dt.time()
+    start_time = time(10, 0, 0)
+    end_time = time(17, 1, 0) # Up to 17:00:59 IST
+    
+    return start_time <= t < end_time
+
+def get_last_market_minute(epoch: int) -> int:
+    """
+    Returns the nearest epoch timestamp (truncated to minute) that is within market hours and <= epoch.
+    """
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+    dt = datetime.fromtimestamp(epoch, tz=IST)
+    
+    # If weekend, rewind to Friday 5:00 PM IST
+    if dt.weekday() == 5: # Saturday
+        dt = (dt - timedelta(days=1)).replace(hour=17, minute=0, second=0, microsecond=0)
+        return int(dt.timestamp())
+    elif dt.weekday() == 6: # Sunday
+        dt = (dt - timedelta(days=2)).replace(hour=17, minute=0, second=0, microsecond=0)
+        return int(dt.timestamp())
+        
+    # If weekday, but before 10:00 AM:
+    # if Monday: go to Friday 5:00 PM
+    # else: go to yesterday 5:00 PM
+    if dt.hour < 10:
+        if dt.weekday() == 0: # Monday
+            dt = (dt - timedelta(days=3)).replace(hour=17, minute=0, second=0, microsecond=0)
+        else:
+            dt = (dt - timedelta(days=1)).replace(hour=17, minute=0, second=0, microsecond=0)
+        return int(dt.timestamp())
+        
+    # If weekday, but after 5:00 PM:
+    # Set to 17:00 of today
+    if dt.hour >= 17:
+        if dt.hour > 17 or dt.minute > 0 or dt.second > 0:
+            dt = dt.replace(hour=17, minute=0, second=0, microsecond=0)
+            return int(dt.timestamp())
+            
+    return epoch - (epoch % 60)
+
 def save_tick(symbol: str, token: str, price: float, open_interest: int, volume: int):
+    now = int(time.time())
+    if not is_market_hours(now):
+        return
+        
     conn = get_db_connection()
     cursor = get_cursor(conn)
-    
-    now = int(time.time())
     
     # Check if we already have a tick for this token in the current minute to avoid bloat
     current_minute = now - (now % 60)
@@ -182,6 +238,10 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
     cursor.close()
     conn.close()
     
+    if not rows:
+        return []
+        
+    rows = [r for r in rows if is_market_hours(r["interval_time"])]
     if not rows:
         return []
         
