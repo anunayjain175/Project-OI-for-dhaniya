@@ -542,8 +542,8 @@ function initPriceChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
-            fixRightEdge: true,
-            fixLeftEdge: true,
+            fixRightEdge: false,
+            fixLeftEdge: false,
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
@@ -728,8 +728,8 @@ function initOIChart() {
             borderColor: 'rgba(255, 255, 255, 0.1)',
             timeVisible: true,
             secondsVisible: false,
-            fixRightEdge: true,
-            fixLeftEdge: true,
+            fixRightEdge: false,
+            fixLeftEdge: false,
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 if (tickMarkType < 3) {
