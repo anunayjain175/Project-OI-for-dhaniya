@@ -804,9 +804,19 @@ function applyTimeframe(timeframeMinutes) {
                               prevD.getUTCMonth() === currD.getUTCMonth() &&
                               prevD.getUTCDate() === currD.getUTCDate();
             if (!isSameDay) {
-                diff = c.volume;
+                // Day changed! Check if broker carried over yesterday's closing volume
+                const yesterdayVolume = filteredHistory[i - 1].volume;
+                if (c.volume >= yesterdayVolume) {
+                    diff = c.volume - yesterdayVolume;
+                } else {
+                    diff = c.volume;
+                }
             } else {
                 diff = c.volume - filteredHistory[i - 1].volume;
+                if (diff < 0) {
+                    // Reset occurred during the day (delayed reset)
+                    diff = c.volume;
+                }
             }
         } else {
             diff = c.volume;
@@ -1089,8 +1099,13 @@ function handleLiveTick(tick) {
             activeMinuteLow = Math.min(activeMinuteLow, tick.price);
             activeMinuteClose = tick.price;
             if (activeMinuteVolumeStart !== null) {
-                const diff = tick.volume - activeMinuteVolumeStart;
-                activeMinuteVolume = diff >= 0 ? diff : 0;
+                let diff = tick.volume - activeMinuteVolumeStart;
+                if (diff < 0) {
+                    // Reset occurred during the day (delayed reset)
+                    activeMinuteVolumeStart = 0;
+                    diff = tick.volume;
+                }
+                activeMinuteVolume = diff;
             } else {
                 activeMinuteVolumeStart = tick.volume;
                 activeMinuteVolume = 0;
