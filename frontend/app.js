@@ -597,7 +597,7 @@ function initPriceChart() {
     
     volumeSeries.priceScale().applyOptions({
         scaleMargins: {
-            top: 0.8,
+            top: 0.65,
             bottom: 0,
         },
     });
@@ -868,7 +868,7 @@ function applyTimeframe(timeframeMinutes) {
     const volumeData = aggregated.map(c => ({
         time: c.time,
         value: c.volume,
-        color: c.close >= c.open ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+        color: c.close >= c.open ? 'rgba(0, 230, 118, 0.75)' : 'rgba(255, 23, 68, 0.75)'
     }));
     volumeSeries.setData(volumeData);
     
@@ -1113,7 +1113,7 @@ function handleLiveTick(tick) {
             volumeSeries.update({
                 time: activeMinuteTime,
                 value: activeMinuteVolume,
-                color: activeMinuteClose >= activeMinuteOpen ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 23, 68, 0.4)'
+                color: activeMinuteClose >= activeMinuteOpen ? 'rgba(0, 230, 118, 0.75)' : 'rgba(255, 23, 68, 0.75)'
             });
         }
         
