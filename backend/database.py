@@ -283,9 +283,12 @@ _worker_thread.start()
 
 def save_tick(symbol: str, token: str, price: float, open_interest: int, volume: int):
     now = int(time.time())
-    if not is_market_hours(now):
-        return
-    db_write_queue.put((symbol, token, price, open_interest, volume, now))
+    if is_market_hours(now):
+        db_write_queue.put((symbol, token, price, open_interest, volume, now))
+    else:
+        # Route after-hours ticks to the final EOD timestamp of the active session
+        eod_ts = get_last_market_minute(now)
+        db_write_queue.put((symbol, token, price, open_interest, volume, eod_ts))
 
 def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = None):
     conn = get_db_connection()

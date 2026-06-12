@@ -1020,6 +1020,13 @@ async def set_closing_data(data: dict):
     # 3. Rebuild mock history from updated baseline
     connector._generate_single_mock_history(token, connector.baselines[token])
 
+    # Save manually entered EOD closing data to database
+    try:
+        from backend.database import save_tick
+        save_tick(symbol, token, close, oi, volume)
+    except Exception as db_err:
+        print(f"FastAPI: Error saving manual EOD tick: {db_err}")
+
     # 4. Broadcast to all connected WebSocket clients
     tick = connector.settings["eod_override"][token].copy()
     tick["type"] = "FUT"

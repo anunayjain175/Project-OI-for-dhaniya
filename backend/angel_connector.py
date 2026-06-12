@@ -446,6 +446,14 @@ class AngelConnector:
                 }
             }
             self.market_data[token] = dash_tick
+            
+            # Save EOD tick to database (to sync history chart and curve table)
+            try:
+                from backend.database import save_tick
+                save_tick(symbol, token, ltp, oi, volume)
+            except Exception as db_err:
+                print(f"AngelConnector: Error saving EOD tick from quote: {db_err}")
+                
             return dash_tick
         return None
 
