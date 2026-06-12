@@ -98,7 +98,7 @@ let config = {};
 let currentHistoryData = [];
 let isCrosshairActive = false;
 let raw1mHistory = [];
-let currentTimeframe = 1; // Default to 1-minute (1m) timeframe
+let currentTimeframe = 5; // Default to 5-minute (5m) timeframe
 let isSyncingSuspended = false;
 
 
