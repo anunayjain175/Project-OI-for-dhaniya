@@ -1361,12 +1361,11 @@ function updateUIPanels(data) {
     sentimentValueEl.className = sentClass;
     sentimentDescEl.innerText = sentDesc;
 
-    // 6. Stats Table
-    statOpenEl.innerText = ohlc.open ? ohlc.open.toFixed(2) : price.toFixed(2);
-    statHighEl.innerText = ohlc.high ? ohlc.high.toFixed(2) : price.toFixed(2);
-    statLowEl.innerText = ohlc.low ? ohlc.low.toFixed(2) : price.toFixed(2);
-    statPrevCloseEl.innerText = yestClose.toFixed(2);
-    statTokenEl.innerText = config.active_token || "-";
+    if (statOpenEl) statOpenEl.innerText = ohlc.open ? ohlc.open.toFixed(2) : price.toFixed(2);
+    if (statHighEl) statHighEl.innerText = ohlc.high ? ohlc.high.toFixed(2) : price.toFixed(2);
+    if (statLowEl) statLowEl.innerText = ohlc.low ? ohlc.low.toFixed(2) : price.toFixed(2);
+    if (statPrevCloseEl) statPrevCloseEl.innerText = yestClose.toFixed(2);
+    if (statTokenEl) statTokenEl.innerText = config.active_token || "-";
 
     // 7. Today's Price Range Slider
     const statLow = ohlc.low || price;

@@ -996,3 +996,8 @@ body {
     }
 }
 
+/* Fix stats curve table header vertical overlap by disabling stickiness */
+#stats-history-table th {
+    position: static !important;
+}
+
