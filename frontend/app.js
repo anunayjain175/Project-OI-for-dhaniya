@@ -216,7 +216,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.log("App startup: fetching config...");
     await fetchConfig();
     if (chartSymbolNameEl && currentSymbol) {
-        chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
+        chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART`;
     }
     
     // 2. Initialize Lightweight Price Chart & OI Chart
@@ -259,7 +259,7 @@ function setupEventListeners() {
     symbolSelect.addEventListener("change", async (e) => {
         currentSymbol = e.target.value;
         if (!currentSymbol) return;
-        chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART (ANGEL ONE SMARTAPI)`;
+        chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART`;
 
         // Reset trade activity baselines
         lastLiveVolume = null;
