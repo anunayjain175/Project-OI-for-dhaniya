@@ -1487,23 +1487,44 @@ async function loadCommodityCurveHistory(symbol) {
                 
                 // Contracts
                 contracts.forEach((c, idx) => {
-                    const cData = day.contracts[c] || { close: null, oi: null };
+                    const cData = day.contracts[c] || { close: null, change: null, oi: null };
                     
                     const tdClose = document.createElement("td");
-                    tdClose.innerText = cData.close !== null ? cData.close.toFixed(0) : "-";
+                    
+                    // Display change instead of close
+                    if (cData.change !== null) {
+                        const sign = cData.change > 0 ? "+" : "";
+                        tdClose.innerText = `${sign}${cData.change.toFixed(0)}`;
+                        if (cData.change > 0) {
+                            tdClose.className = "text-positive";
+                        } else if (cData.change < 0) {
+                            tdClose.className = "text-negative";
+                        } else {
+                            tdClose.style.color = "#d1d5db";
+                        }
+                    } else {
+                        tdClose.innerText = "-";
+                        tdClose.style.color = "#d1d5db";
+                    }
+                    
+                    // Cache yesterday's close on today's row cells for real-time updates
+                    if (day === history[0]) {
+                        const nextDay = history[1];
+                        const yestCloseVal = nextDay && nextDay.contracts[c] ? nextDay.contracts[c].close : null;
+                        if (yestCloseVal !== null) {
+                            tdClose.setAttribute("data-yest-close", yestCloseVal);
+                        }
+                    }
                     
                     const tdOi = document.createElement("td");
                     tdOi.innerText = cData.oi !== null ? formatNumber(cData.oi) : "-";
                     
-                    // Add color coding
+                    // Add color coding for OI column
                     if (idx === 0) {
-                        tdClose.style.color = "var(--color-ce)";
                         tdOi.style.color = "var(--color-ce)";
                     } else if (idx === 1) {
-                        tdClose.style.color = "var(--color-pe)";
                         tdOi.style.color = "var(--color-pe)";
                     } else {
-                        tdClose.style.color = "#d1d5db";
                         tdOi.style.color = "#d1d5db";
                     }
                     
@@ -1563,7 +1584,30 @@ function updateCurveHistoryTodayRow(tick) {
     const closeCellIdx = 1 + contractIdx * 2;
     const oiCellIdx = 2 + contractIdx * 2;
     
-    firstRow.cells[closeCellIdx].innerText = tick.price.toFixed(0);
+    const closeCell = firstRow.cells[closeCellIdx];
+    const yestCloseAttr = closeCell.getAttribute("data-yest-close");
+    const yestClose = yestCloseAttr ? parseFloat(yestCloseAttr) : null;
+    
+    if (yestClose !== null) {
+        const priceChange = tick.price - yestClose;
+        const sign = priceChange > 0 ? "+" : "";
+        closeCell.innerText = `${sign}${priceChange.toFixed(0)}`;
+        
+        closeCell.classList.remove("text-positive", "text-negative");
+        closeCell.style.color = "";
+        
+        if (priceChange > 0) {
+            closeCell.classList.add("text-positive");
+        } else if (priceChange < 0) {
+            closeCell.classList.add("text-negative");
+        } else {
+            closeCell.style.color = "#d1d5db";
+        }
+    } else {
+        closeCell.innerText = "-";
+        closeCell.style.color = "#d1d5db";
+    }
+    
     firstRow.cells[oiCellIdx].innerText = formatNumber(tick.oi);
     
     // Recalculate Total OI for today's row

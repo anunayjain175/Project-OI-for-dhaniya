@@ -775,20 +775,20 @@ def get_commodity_curve_history(commodity_prefix: str, connector):
     target_items = matching_symbols[:3]
     target_symbols = [item[0] for item in target_items]
     
-    # 2. Get the last 5 weekdays in IST
+    # 2. Get the last 6 weekdays in IST (so we can calculate change for the latest 5 weekdays)
     IST = timezone(timedelta(hours=5, minutes=30))
     weekdays = []
     temp_date = datetime.now(IST)
     
-    while len(weekdays) < 5:
+    while len(weekdays) < 6:
         if temp_date.weekday() < 5: # 0-4 are Mon-Fri
             weekdays.append(temp_date.strftime("%Y-%m-%d"))
         temp_date -= timedelta(days=1)
         
     weekdays.reverse()
     
-    # 3. Query database for ticks for each symbol in the last 15 days
-    start_ts = int(time.time()) - 15 * 24 * 3600
+    # 3. Query database for ticks for each symbol in the last 18 days
+    start_ts = int(time.time()) - 18 * 24 * 3600
     
     conn = get_db_connection()
     cursor = get_cursor(conn)
@@ -863,8 +863,12 @@ def get_commodity_curve_history(commodity_prefix: str, connector):
                 curr_oi = daily_ticks[day]["oi"]
                 
     # 5. Build final history result list (sorted descending: latest first)
+    target_weekdays = weekdays[1:]
     result = []
-    for day in reversed(weekdays):
+    for day in reversed(target_weekdays):
+        day_idx = weekdays.index(day)
+        prev_day = weekdays[day_idx - 1]
+        
         day_info = {
             "date": day,
             "contracts": {},
@@ -872,8 +876,13 @@ def get_commodity_curve_history(commodity_prefix: str, connector):
         }
         for sym in target_symbols:
             day_data = data_by_symbol[sym][day]
+            prev_day_data = data_by_symbol[sym][prev_day]
+            
+            price_change = day_data["close"] - prev_day_data["close"]
+            
             day_info["contracts"][sym] = {
                 "close": day_data["close"],
+                "change": round(price_change, 2),
                 "oi": day_data["oi"]
             }
             day_info["total_oi"] += day_data["oi"]
