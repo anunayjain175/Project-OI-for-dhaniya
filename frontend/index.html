@@ -9,7 +9,7 @@
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Main Stylesheet -->
-    <link rel="stylesheet" href="/static/app.css?v=4">
+    <link rel="stylesheet" href="/static/app.css?v=5">
     <!-- TradingView Standalone Charting Widget -->
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <!-- TradingView Lightweight Charts CDN (pinned to stable v4.1.1) -->
@@ -150,43 +150,59 @@
             <div class="tab-content-container">
                 <!-- Market Statistics Tab -->
                 <div id="tab-market-stats" class="tab-content active">
-                    <div class="table-wrapper">
-                        <table class="option-chain-table" style="text-align: left;">
-                            <thead>
-                                <tr>
-                                    <th>Metric</th>
-                                    <th>Value</th>
-                                    <th>Description</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td class="strike-col">Day Open</td>
-                                    <td id="stat-open">0.00</td>
-                                    <td>The opening price of the current Futures session.</td>
-                                </tr>
-                                <tr>
-                                    <td class="strike-col">Day High</td>
-                                    <td id="stat-high" class="text-positive">0.00</td>
-                                    <td>The highest price reached during today's session.</td>
-                                </tr>
-                                <tr>
-                                    <td class="strike-col">Day Low</td>
-                                    <td id="stat-low" class="text-negative">0.00</td>
-                                    <td>The lowest price reached during today's session.</td>
-                                </tr>
-                                <tr>
-                                    <td class="strike-col">Yesterday's Close</td>
-                                    <td id="stat-prev-close">0.00</td>
-                                    <td>The closing price of the previous trading session.</td>
-                                </tr>
-                                <tr>
-                                    <td class="strike-col">Active Token</td>
-                                    <td id="stat-token">-</td>
-                                    <td>The numerical Security Code subscribed on the ODIN Feed Handler.</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div class="stats-layout-container">
+                        <!-- Today's Range Card -->
+                        <div class="price-range-card">
+                            <div class="price-range-title">Today (Low-High)</div>
+                            <div class="price-range-bar-wrapper">
+                                <div class="price-range-bar-gradient"></div>
+                                <div id="price-range-pin" class="price-range-pin"></div>
+                            </div>
+                            <div class="price-range-labels">
+                                <span id="price-range-low">0.00</span>
+                                <span id="price-range-high">0.00</span>
+                            </div>
+                        </div>
+
+                        <!-- Details Table -->
+                        <div class="table-wrapper">
+                            <table class="option-chain-table" style="text-align: left;">
+                                <thead>
+                                    <tr>
+                                        <th>Metric</th>
+                                        <th>Value</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="strike-col">Day Open</td>
+                                        <td id="stat-open">0.00</td>
+                                        <td>The opening price of the current Futures session.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="strike-col">Day High</td>
+                                        <td id="stat-high" class="text-positive">0.00</td>
+                                        <td>The highest price reached during today's session.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="strike-col">Day Low</td>
+                                        <td id="stat-low" class="text-negative">0.00</td>
+                                        <td>The lowest price reached during today's session.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="strike-col">Yesterday's Close</td>
+                                        <td id="stat-prev-close">0.00</td>
+                                        <td>The closing price of the previous trading session.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="strike-col">Active Token</td>
+                                        <td id="stat-token">-</td>
+                                        <td>The numerical Security Code subscribed on the ODIN Feed Handler.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -364,7 +380,7 @@
     </div>
 
     <!-- Main Javascript -->
-    <script src="/static/app.js?v=27"></script>
+    <script src="/static/app.js?v=28"></script>
 </body>
 </html>
 

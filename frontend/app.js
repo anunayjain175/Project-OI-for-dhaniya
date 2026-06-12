@@ -160,6 +160,11 @@ let statLowEl;
 let statPrevCloseEl;
 let statTokenEl;
 
+// Price Range Elements
+let priceRangePinEl;
+let priceRangeLowEl;
+let priceRangeHighEl;
+
 // Tab Controls
 let tabButtons;
 let tabContents;
@@ -197,6 +202,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     statLowEl = document.getElementById("stat-low");
     statPrevCloseEl = document.getElementById("stat-prev-close");
     statTokenEl = document.getElementById("stat-token");
+
+    // Price Range Elements
+    priceRangePinEl = document.getElementById("price-range-pin");
+    priceRangeLowEl = document.getElementById("price-range-low");
+    priceRangeHighEl = document.getElementById("price-range-high");
 
     // Tab Controls
     tabButtons = document.querySelectorAll(".tab-btn");
@@ -1353,6 +1363,22 @@ function updateUIPanels(data) {
     statLowEl.innerText = ohlc.low ? ohlc.low.toFixed(2) : price.toFixed(2);
     statPrevCloseEl.innerText = yestClose.toFixed(2);
     statTokenEl.innerText = config.active_token || "-";
+
+    // 7. Today's Price Range Slider
+    const statLow = ohlc.low || price;
+    const statHigh = ohlc.high || price;
+
+    if (priceRangeLowEl) priceRangeLowEl.innerText = statLow.toFixed(2);
+    if (priceRangeHighEl) priceRangeHighEl.innerText = statHigh.toFixed(2);
+
+    if (priceRangePinEl) {
+        let pct = 50.0;
+        if (statHigh > statLow) {
+            pct = ((price - statLow) / (statHigh - statLow)) * 100;
+        }
+        const boundedPct = Math.min(100, Math.max(0, pct));
+        priceRangePinEl.style.left = `${boundedPct}%`;
+    }
 }
 
 // Utility Helpers
