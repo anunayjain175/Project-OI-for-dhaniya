@@ -989,7 +989,14 @@ async function loadOIHistory(symbol) {
             }
         }
         
-        priceChart.timeScale().fitContent();
+        if (priceChart) {
+            priceChart.priceScale('right').applyOptions({ autoScale: true });
+            priceChart.timeScale().fitContent();
+        }
+        if (oiChart) {
+            oiChart.priceScale('right').applyOptions({ autoScale: true });
+            oiChart.timeScale().fitContent();
+        }
         
         if (raw1mHistory && raw1mHistory.length > 0) {
             lastLiveVolume = raw1mHistory[raw1mHistory.length - 1].volume;
