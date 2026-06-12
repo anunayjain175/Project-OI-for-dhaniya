@@ -165,41 +165,27 @@
                         </div>
 
                         <!-- Details Table -->
-                        <div class="table-wrapper">
-                            <table class="option-chain-table" style="text-align: left;">
+                        <div class="table-wrapper" style="flex: 1; min-width: 0;">
+                            <table class="option-chain-table" id="stats-history-table" style="text-align: center; font-size: 11px;">
                                 <thead>
-                                    <tr>
-                                        <th>Metric</th>
-                                        <th>Value</th>
-                                        <th>Description</th>
+                                    <tr class="table-super-header">
+                                        <th rowspan="2" style="vertical-align: middle;">Date</th>
+                                        <th colspan="2" id="header-contract-1" class="ce-super-header">-</th>
+                                        <th colspan="2" id="header-contract-2" class="pe-super-header">-</th>
+                                        <th colspan="2" id="header-contract-3" style="background-color: rgba(255, 255, 255, 0.05); color: #e5e7eb; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">-</th>
+                                        <th rowspan="2" style="vertical-align: middle;">Total OI</th>
+                                    </tr>
+                                    <tr style="font-size: 10px;">
+                                        <th class="ce-super-header">Close</th>
+                                        <th class="ce-super-header">OI</th>
+                                        <th class="pe-super-header">Close</th>
+                                        <th class="pe-super-header">OI</th>
+                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-left: 1px solid var(--border-color);">Close</th>
+                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-right: 1px solid var(--border-color);">OI</th>
                                     </tr>
                                 </thead>
-                                <tbody>
-                                    <tr>
-                                        <td class="strike-col">Day Open</td>
-                                        <td id="stat-open">0.00</td>
-                                        <td>The opening price of the current Futures session.</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="strike-col">Day High</td>
-                                        <td id="stat-high" class="text-positive">0.00</td>
-                                        <td>The highest price reached during today's session.</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="strike-col">Day Low</td>
-                                        <td id="stat-low" class="text-negative">0.00</td>
-                                        <td>The lowest price reached during today's session.</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="strike-col">Yesterday's Close</td>
-                                        <td id="stat-prev-close">0.00</td>
-                                        <td>The closing price of the previous trading session.</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="strike-col">Active Token</td>
-                                        <td id="stat-token">-</td>
-                                        <td>The numerical Security Code subscribed on the ODIN Feed Handler.</td>
-                                    </tr>
+                                <tbody id="stats-history-tbody">
+                                    <!-- Rows will be injected here dynamically -->
                                 </tbody>
                             </table>
                         </div>
@@ -380,7 +366,7 @@
     </div>
 
     <!-- Main Javascript -->
-    <script src="/static/app.js?v=28"></script>
+    <script src="/static/app.js?v=29"></script>
 </body>
 </html>
 

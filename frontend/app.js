@@ -229,9 +229,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.log("App startup: setting up event listeners...");
     setupEventListeners();
     
-    // 4. Fetch initial OI chart history
+    // 4. Fetch initial OI chart history & commodity curve statistics
     console.log(`App startup: loading history for ${currentSymbol}...`);
     await loadOIHistory(currentSymbol);
+    await loadCommodityCurveHistory(currentSymbol);
     
     // 5. Connect WebSocket
     console.log("App startup: connecting websocket...");
@@ -288,7 +289,7 @@ function setupEventListeners() {
         if (oiSeries) oiSeries.setData([]);
         
         await loadOIHistory(currentSymbol);
-        
+        await loadCommodityCurveHistory(currentSymbol);
         await fetchStatsData();
     });
 
@@ -363,6 +364,7 @@ function setupEventListeners() {
                 initOIChart();
                 setupChartSynchronization();
                 await loadOIHistory(currentSymbol);
+                await loadCommodityCurveHistory(currentSymbol);
             } else {
                 alert("Error saving settings: " + data.message);
             }
@@ -412,6 +414,7 @@ function setupEventListeners() {
                     // Refresh dashboard immediately
                     await fetchStatsData();
                     await loadOIHistory(currentSymbol);
+                    await loadCommodityCurveHistory(currentSymbol);
                 } else {
                     eodStatus.style.color = "#ef4444";
                     eodStatus.innerText = "Error: " + JSON.stringify(data);
@@ -1088,6 +1091,7 @@ function handleLiveTick(tick) {
 
         // Update stats UI panels (always, even after hours or on weekends)
         updateUIPanels(tick);
+        updateCurveHistoryTodayRow(tick);
         
         if (!isMarketHours(tick.time)) {
             // Ignore ticks for chart rendering if they occur outside market hours
@@ -1443,4 +1447,132 @@ function clearLegendValues() {
         document.getElementById("legend-volume").innerText = "-";
         document.getElementById("legend-oi").innerText = "-";
     }
+}
+
+// Fetch and render last 5 days total OI & closing prices for all contracts of the commodity
+async function loadCommodityCurveHistory(symbol) {
+    try {
+        const res = await fetch(`/api/commodity-history?symbol=${symbol}&_=${Date.now()}`);
+        const data = await res.json();
+        
+        const contracts = data.contracts || [];
+        const history = data.history || [];
+        
+        // 1. Update super headers
+        const h1 = document.getElementById("header-contract-1");
+        const h2 = document.getElementById("header-contract-2");
+        const h3 = document.getElementById("header-contract-3");
+        
+        if (h1) h1.innerText = contracts[0] ? getShortExpiryName(contracts[0]) : "-";
+        if (h2) h2.innerText = contracts[1] ? getShortExpiryName(contracts[1]) : "-";
+        if (h3) h3.innerText = contracts[2] ? getShortExpiryName(contracts[2]) : "-";
+        
+        // 2. Populate body
+        const tbody = document.getElementById("stats-history-tbody");
+        if (tbody) {
+            tbody.innerHTML = "";
+            
+            history.forEach(day => {
+                const tr = document.createElement("tr");
+                
+                // Format date from YYYY-MM-DD to DD/MM
+                const dateParts = day.date.split("-");
+                const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}` : day.date;
+                
+                // Date column
+                const tdDate = document.createElement("td");
+                tdDate.innerText = formattedDate;
+                tdDate.style.fontWeight = "600";
+                tdDate.style.color = "var(--text-secondary)";
+                tr.appendChild(tdDate);
+                
+                // Contracts
+                contracts.forEach((c, idx) => {
+                    const cData = day.contracts[c] || { close: null, oi: null };
+                    
+                    const tdClose = document.createElement("td");
+                    tdClose.innerText = cData.close !== null ? cData.close.toFixed(0) : "-";
+                    
+                    const tdOi = document.createElement("td");
+                    tdOi.innerText = cData.oi !== null ? formatNumber(cData.oi) : "-";
+                    
+                    // Add color coding
+                    if (idx === 0) {
+                        tdClose.style.color = "var(--color-ce)";
+                        tdOi.style.color = "var(--color-ce)";
+                    } else if (idx === 1) {
+                        tdClose.style.color = "var(--color-pe)";
+                        tdOi.style.color = "var(--color-pe)";
+                    } else {
+                        tdClose.style.color = "#d1d5db";
+                        tdOi.style.color = "#d1d5db";
+                    }
+                    
+                    tr.appendChild(tdClose);
+                    tr.appendChild(tdOi);
+                });
+                
+                // Total OI
+                const tdTotal = document.createElement("td");
+                tdTotal.innerText = formatNumber(day.total_oi);
+                tdTotal.style.fontWeight = "bold";
+                tdTotal.style.color = "var(--color-accent)";
+                tr.appendChild(tdTotal);
+                
+                tbody.appendChild(tr);
+            });
+        }
+    } catch (err) {
+        console.error("Error loading commodity curve history:", err);
+    }
+}
+
+// Extract short expiry name from full symbol (e.g. "DHANIYA JUN 26" -> "JUN 26")
+function getShortExpiryName(symbol) {
+    const parts = symbol.split(" ");
+    if (parts.length >= 3) {
+        return `${parts[parts.length - 2]} ${parts[parts.length - 1]}`;
+    }
+    return symbol;
+}
+
+// Update Today's row values in the curve history table on live tick updates
+function updateCurveHistoryTodayRow(tick) {
+    const tbody = document.getElementById("stats-history-tbody");
+    if (!tbody || !tbody.rows || tbody.rows.length === 0) return;
+    
+    const now = new Date();
+    const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`;
+    
+    // Check if the first row is today's row
+    const firstRow = tbody.rows[0];
+    const dateCellText = firstRow.cells[0].innerText;
+    if (dateCellText !== todayStr) return;
+    
+    const activeShortName = getShortExpiryName(currentSymbol);
+    let contractIdx = -1;
+    for (let i = 1; i <= 3; i++) {
+        const h = document.getElementById(`header-contract-${i}`);
+        if (h && h.innerText === activeShortName) {
+            contractIdx = i - 1;
+            break;
+        }
+    }
+    
+    if (contractIdx === -1) return;
+    
+    const closeCellIdx = 1 + contractIdx * 2;
+    const oiCellIdx = 2 + contractIdx * 2;
+    
+    firstRow.cells[closeCellIdx].innerText = tick.price.toFixed(0);
+    firstRow.cells[oiCellIdx].innerText = formatNumber(tick.oi);
+    
+    // Recalculate Total OI for today's row
+    let totalOi = 0;
+    for (let i = 0; i < 3; i++) {
+        const oiValStr = firstRow.cells[2 + i * 2].innerText.replace(/,/g, '');
+        const oiVal = parseInt(oiValStr) || 0;
+        totalOi += oiVal;
+    }
+    firstRow.cells[7].innerText = formatNumber(totalOi);
 }
