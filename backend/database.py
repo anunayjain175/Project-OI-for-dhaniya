@@ -1,6 +1,8 @@
 import sqlite3
 import os
 import time
+import queue
+import threading
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oi_history.db")
@@ -148,99 +150,142 @@ def get_last_market_minute(epoch: int) -> int:
             
     return epoch - (epoch % 60)
 
+db_write_queue = queue.Queue()
+
+def _db_writer_worker():
+    conn = None
+    cursor = None
+    while True:
+        try:
+            # Block until an item is available
+            item = db_write_queue.get()
+            if item is None:
+                db_write_queue.task_done()
+                break
+                
+            symbol, token, price, open_interest, volume, now = item
+            
+            # Ensure database connection is active
+            if conn is None or (hasattr(conn, "closed") and conn.closed):
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                print("Database Worker: Opening fresh connection...")
+                conn = get_db_connection()
+                cursor = get_cursor(conn)
+                
+            p = get_placeholder()
+            
+            # 1. Fetch the last recorded tick overall for this token PRIOR to the current minute (to get baseline volume/price)
+            current_minute = now - (now % 60)
+            query_prev = f"""
+                SELECT open, high, low, close, open_interest, volume, timestamp FROM ticks
+                WHERE token = {p} AND timestamp < {p}
+                ORDER BY timestamp DESC LIMIT 1
+            """
+            cursor.execute(query_prev, (token, current_minute))
+            prev_tick = cursor.fetchone()
+            
+            # 2. Check if we already have a tick for this token in the current minute
+            query_curr = f"""
+                SELECT id, open, high, low, close, open_interest, volume FROM ticks 
+                WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
+                ORDER BY timestamp DESC LIMIT 1
+            """
+            cursor.execute(query_curr, (token, current_minute, current_minute + 60))
+            curr_tick = cursor.fetchone()
+            
+            if curr_tick:
+                # We are updating the current minute's tick
+                if prev_tick and volume > prev_tick["volume"]:
+                    # This is a trade tick!
+                    if curr_tick["volume"] == prev_tick["volume"]:
+                        # This is the first trade of the minute! Overwrite the placeholder values.
+                        update_query = f"""
+                            UPDATE ticks SET 
+                                timestamp = {p},
+                                open = {p},
+                                high = {p},
+                                low = {p},
+                                close = {p},
+                                open_interest = {p},
+                                volume = {p}
+                            WHERE id = {p}
+                        """
+                        cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, curr_tick["id"]))
+                    else:
+                        # Standard update within the same minute
+                        new_high = max(curr_tick["high"], price)
+                        new_low = min(curr_tick["low"], price)
+                        update_query = f"""
+                            UPDATE ticks SET 
+                                timestamp = {p},
+                                high = {p},
+                                low = {p},
+                                close = {p},
+                                open_interest = {p},
+                                volume = {p}
+                            WHERE id = {p}
+                        """
+                        cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, curr_tick["id"]))
+                else:
+                    # Standard heartbeat/no-trade update: just update close, OI, and volume
+                    update_query = f"""
+                        UPDATE ticks SET 
+                            timestamp = {p},
+                            close = {p},
+                            open_interest = {p},
+                            volume = {p}
+                        WHERE id = {p}
+                    """
+                    cursor.execute(update_query, (now, price, open_interest, volume, curr_tick["id"]))
+            else:
+                # We are inserting a new minute tick
+                if prev_tick and volume <= prev_tick["volume"]:
+                    # Insert a placeholder candle at the previous close price (no trades occurred yet)
+                    prev_close = prev_tick["close"]
+                    insert_query = f"""
+                        INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    """
+                    cursor.execute(insert_query, (now, symbol, token, prev_close, prev_close, prev_close, prev_close, open_interest, prev_tick["volume"]))
+                else:
+                    # Insert a new trading candle
+                    insert_query = f"""
+                        INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    """
+                    cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume))
+                
+            conn.commit()
+            db_write_queue.task_done()
+            
+        except Exception as e:
+            print(f"Database Worker Error: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+                try:
+                    conn.close()
+                except:
+                    pass
+                conn = None
+                cursor = None
+            db_write_queue.task_done()
+
+# Start background writer thread
+_worker_thread = threading.Thread(target=_db_writer_worker, name="DBWriterWorker", daemon=True)
+_worker_thread.start()
+
 def save_tick(symbol: str, token: str, price: float, open_interest: int, volume: int):
     now = int(time.time())
     if not is_market_hours(now):
         return
-        
-    conn = get_db_connection()
-    cursor = get_cursor(conn)
-    p = get_placeholder()
-    
-    # 1. Fetch the last recorded tick overall for this token (to get baseline volume/price)
-    query_prev = f"""
-        SELECT open, high, low, close, open_interest, volume, timestamp FROM ticks
-        WHERE token = {p}
-        ORDER BY timestamp DESC LIMIT 1
-    """
-    cursor.execute(query_prev, (token,))
-    prev_tick = cursor.fetchone()
-    
-    # 2. Check if we already have a tick for this token in the current minute
-    current_minute = now - (now % 60)
-    query_curr = f"""
-        SELECT id, open, high, low, close, open_interest, volume FROM ticks 
-        WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
-        ORDER BY timestamp DESC LIMIT 1
-    """
-    cursor.execute(query_curr, (token, current_minute, current_minute + 60))
-    curr_tick = cursor.fetchone()
-    
-    if curr_tick:
-        # We are updating the current minute's tick
-        if prev_tick and volume > prev_tick["volume"]:
-            # This is a trade tick!
-            if curr_tick["volume"] == prev_tick["volume"]:
-                # This is the first trade of the minute! Overwrite the placeholder values.
-                update_query = f"""
-                    UPDATE ticks SET 
-                        timestamp = {p},
-                        open = {p},
-                        high = {p},
-                        low = {p},
-                        close = {p},
-                        open_interest = {p},
-                        volume = {p}
-                    WHERE id = {p}
-                """
-                cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, curr_tick["id"]))
-            else:
-                # Standard update within the same minute
-                new_high = max(curr_tick["high"], price)
-                new_low = min(curr_tick["low"], price)
-                update_query = f"""
-                    UPDATE ticks SET 
-                        timestamp = {p},
-                        high = {p},
-                        low = {p},
-                        close = {p},
-                        open_interest = {p},
-                        volume = {p}
-                    WHERE id = {p}
-                """
-                cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, curr_tick["id"]))
-        else:
-            # Standard heartbeat/no-trade update: just update close, OI, and volume
-            update_query = f"""
-                UPDATE ticks SET 
-                    timestamp = {p},
-                    close = {p},
-                    open_interest = {p},
-                    volume = {p}
-                WHERE id = {p}
-            """
-            cursor.execute(update_query, (now, price, open_interest, volume, curr_tick["id"]))
-    else:
-        # We are inserting a new minute tick
-        if prev_tick and volume <= prev_tick["volume"]:
-            # Insert a placeholder candle at the previous close price (no trades occurred yet)
-            prev_close = prev_tick["close"]
-            insert_query = f"""
-                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
-            """
-            cursor.execute(insert_query, (now, symbol, token, prev_close, prev_close, prev_close, prev_close, open_interest, prev_tick["volume"]))
-        else:
-            # Insert a new trading candle
-            insert_query = f"""
-                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
-            """
-            cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume))
-        
-    conn.commit()
-    cursor.close()
-    conn.close()
+    db_write_queue.put((symbol, token, price, open_interest, volume, now))
 
 def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = None):
     conn = get_db_connection()

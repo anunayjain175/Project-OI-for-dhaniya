@@ -129,7 +129,7 @@ def shutdown_event():
     global connector
     if connector:
         connector.stop()
-        print("FastAPI: Stopped OdinConnector listener")
+        print("FastAPI: Stopped AngelConnector listener")
 
 # Endpoints
 @app.api_route("/health", methods=["GET", "HEAD", "POST"])

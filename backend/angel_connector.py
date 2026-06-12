@@ -676,13 +676,6 @@ class AngelConnector:
                                             break
                                             
                                     if match_symbol:
-                                        # Forward to database
-                                        try:
-                                            from backend.database import save_tick
-                                            save_tick(match_symbol, tick_token, tick["ltp"], tick["oi"], tick["volume"])
-                                        except Exception as db_err:
-                                            print(f"AngelConnector: DB write error: {db_err}")
-                                            
                                         # If this tick matches the active contract, update UI panels
                                         target_symbol = self.settings["active_symbol"]
                                         if match_symbol == target_symbol:
@@ -708,6 +701,13 @@ class AngelConnector:
                                             }
                                             self.market_data[tick_token] = dash_tick
                                             self.broadcast_callback(dash_tick)
+
+                                        # Forward to database (runs instantly via queue)
+                                        try:
+                                            from backend.database import save_tick
+                                            save_tick(match_symbol, tick_token, tick["ltp"], tick["oi"], tick["volume"])
+                                        except Exception as db_err:
+                                            print(f"AngelConnector: DB write error: {db_err}")
                                 else:
                                     print(f"AngelConnector WSS: parse_smart_stream_binary failed for bytes of len={len(frame)}")
                         except asyncio.TimeoutError:
