@@ -141,6 +141,11 @@ let cancelSettingsBtn;
 let modeSelect;
 let liveSettingsFields;
 
+// PIN Lock elements
+let pinModal;
+let pinHiddenInput;
+let enteredPin = "";
+
 // KPI Elements
 let futuresPriceEl;
 let futuresChangeEl;
@@ -183,6 +188,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     cancelSettingsBtn = document.getElementById("cancel-settings-btn");
     modeSelect = document.getElementById("mode-select");
     liveSettingsFields = document.getElementById("live-settings-fields");
+    pinModal = document.getElementById("pin-modal");
+    pinHiddenInput = document.getElementById("pin-hidden-input");
 
     // KPI Elements
     futuresPriceEl = document.getElementById("futures-price");
@@ -305,8 +312,8 @@ function setupEventListeners() {
         });
     });
 
-    // Settings Modal
-    settingsBtn.addEventListener("click", () => {
+    // Helper to open settings modal
+    function openSettingsModalDirectly() {
         document.getElementById("angel_client_id").value = config.angel_client_id || "";
         document.getElementById("angel_password").value = config.angel_password || "";
         document.getElementById("angel_totp_secret").value = config.angel_totp_secret || "";
@@ -314,6 +321,7 @@ function setupEventListeners() {
         document.getElementById("active_symbol").value = config.active_symbol || "";
         document.getElementById("active_token").value = config.active_token || "";
         document.getElementById("active_segment").value = config.active_segment || "7";
+        document.getElementById("settings_pin").value = config.settings_pin || "";
         modeSelect.value = config.mode || "mock";
         
         const activeSymInfo = (config.futures_symbols && config.futures_symbols[currentSymbol]) || {};
@@ -321,7 +329,138 @@ function setupEventListeners() {
         
         toggleLiveFields(modeSelect.value);
         settingsModal.style.display = "block";
+    }
+
+    // Settings Modal (with PIN security check)
+    settingsBtn.addEventListener("click", () => {
+        if (config.settings_pin && config.settings_pin.trim() !== "") {
+            enteredPin = "";
+            pinHiddenInput.value = "";
+            initPinDots();
+            pinModal.style.display = "block";
+            setTimeout(() => pinHiddenInput.focus(), 50);
+        } else {
+            openSettingsModalDirectly();
+        }
     });
+
+    function initPinDots() {
+        const dotsContainer = document.getElementById("pin-dots-container");
+        if (!dotsContainer) return;
+        dotsContainer.innerHTML = "";
+        const len = config.settings_pin ? config.settings_pin.length : 4;
+        for (let i = 0; i < len; i++) {
+            const dot = document.createElement("div");
+            dot.className = "pin-dot";
+            dotsContainer.appendChild(dot);
+        }
+    }
+
+    function updatePinDots() {
+        const dotsContainer = document.getElementById("pin-dots-container");
+        if (!dotsContainer) return;
+        const dots = dotsContainer.querySelectorAll(".pin-dot");
+        dots.forEach((dot, idx) => {
+            if (idx < enteredPin.length) {
+                dot.classList.add("filled");
+            } else {
+                dot.classList.remove("filled");
+            }
+        });
+    }
+
+    function checkPin() {
+        const targetPin = config.settings_pin || "";
+        if (enteredPin === targetPin) {
+            pinModal.style.display = "none";
+            openSettingsModalDirectly();
+            enteredPin = "";
+            pinHiddenInput.value = "";
+            updatePinDots();
+        } else if (enteredPin.length >= targetPin.length) {
+            const content = document.querySelector(".pin-modal-content");
+            content.classList.add("error-shake");
+            
+            const dotsContainer = document.getElementById("pin-dots-container");
+            const dots = dotsContainer ? dotsContainer.querySelectorAll(".pin-dot") : [];
+            dots.forEach(dot => dot.classList.add("error"));
+            
+            setTimeout(() => {
+                content.classList.remove("error-shake");
+                dots.forEach(dot => dot.classList.remove("error"));
+                enteredPin = "";
+                pinHiddenInput.value = "";
+                updatePinDots();
+            }, 600);
+        }
+    }
+
+    // Keypad triggers
+    document.querySelectorAll(".pin-key").forEach(key => {
+        key.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const val = key.getAttribute("data-val");
+            const targetLen = config.settings_pin ? config.settings_pin.length : 4;
+            if (val !== null) {
+                if (enteredPin.length < targetLen) {
+                    enteredPin += val;
+                    pinHiddenInput.value = enteredPin;
+                    updatePinDots();
+                    checkPin();
+                }
+            }
+            pinHiddenInput.focus();
+        });
+    });
+
+    const btnClear = document.getElementById("pin-btn-clear");
+    if (btnClear) {
+        btnClear.addEventListener("click", (e) => {
+            e.stopPropagation();
+            enteredPin = "";
+            pinHiddenInput.value = "";
+            updatePinDots();
+            pinHiddenInput.focus();
+        });
+    }
+
+    const btnBackspace = document.getElementById("pin-btn-backspace");
+    if (btnBackspace) {
+        btnBackspace.addEventListener("click", (e) => {
+            e.stopPropagation();
+            enteredPin = enteredPin.slice(0, -1);
+            pinHiddenInput.value = enteredPin;
+            updatePinDots();
+            pinHiddenInput.focus();
+        });
+    }
+
+    pinHiddenInput.addEventListener("input", (e) => {
+        enteredPin = e.target.value;
+        updatePinDots();
+        checkPin();
+    });
+
+    pinModal.addEventListener("click", (e) => {
+        if (e.target === pinModal) {
+            pinModal.style.display = "none";
+            enteredPin = "";
+            pinHiddenInput.value = "";
+            updatePinDots();
+        } else {
+            pinHiddenInput.focus();
+        }
+    });
+
+    const pinCancelBtn = document.getElementById("pin-cancel-btn");
+    if (pinCancelBtn) {
+        pinCancelBtn.addEventListener("click", () => {
+            pinModal.style.display = "none";
+            enteredPin = "";
+            pinHiddenInput.value = "";
+            updatePinDots();
+        });
+    }
 
     closeModalBtn.addEventListener("click", () => {
         settingsModal.style.display = "none";
