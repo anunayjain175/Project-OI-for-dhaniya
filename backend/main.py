@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 import os
 import collections
@@ -101,7 +102,7 @@ async def periodic_prune_task():
     import asyncio
     while True:
         try:
-            prune_ticks(days_to_keep=35)
+            prune_ticks(days_to_keep=1825)
         except Exception as e:
             print(f"Error in periodic database prune task: {e}")
         # Run every 12 hours

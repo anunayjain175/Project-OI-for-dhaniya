@@ -9,7 +9,7 @@
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Main Stylesheet -->
-    <link rel="stylesheet" href="/static/app.css?v=8">
+    <link rel="stylesheet" href="/static/app.css?v=10">
     <!-- TradingView Standalone Charting Widget -->
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <!-- TradingView Lightweight Charts CDN (pinned to stable v4.1.1) -->
@@ -118,6 +118,20 @@
                         <button class="timeframe-btn" data-minutes="60">1h</button>
                         <button class="timeframe-btn" data-minutes="1440">1D</button>
                     </div>
+                    <div class="indicator-controls">
+                        <div class="indicator-dropdown">
+                            <button class="indicator-toggle-btn" id="indicator-toggle-btn">
+                                <i class="fa-solid fa-chart-line"></i> Indicators
+                            </button>
+                            <div class="indicator-dropdown-menu" id="indicator-dropdown-menu">
+                                <div class="indicator-section-title">Moving Averages</div>
+                                <div id="ma-checkboxes"></div>
+                                <div class="indicator-section-title" style="margin-top: 8px;">Oscillators</div>
+                                <label class="indicator-checkbox"><input type="checkbox" id="toggle-rsi"> RSI (14)</label>
+                                <label class="indicator-checkbox"><input type="checkbox" id="toggle-atr"> ATR (14)</label>
+                            </div>
+                        </div>
+                    </div>
                     <div id="chart-legend" class="chart-legend">
                         <span class="legend-item">O: <span id="legend-open" class="legend-value">-</span></span>
                         <span class="legend-item">H: <span id="legend-high" class="legend-value">-</span></span>
@@ -133,6 +147,10 @@
                 </div>
                 <!-- Synchronized OI Chart Container (Lightweight Charts) -->
                 <div id="oi-chart" class="chart-pane-oi"></div>
+                <!-- RSI Chart Container -->
+                <div id="rsi-chart" class="chart-pane-indicator" style="display: none;"></div>
+                <!-- ATR Chart Container -->
+                <div id="atr-chart" class="chart-pane-indicator" style="display: none;"></div>
             </div>
         </main>
 
@@ -412,7 +430,7 @@
     </div>
 
     <!-- Main Javascript -->
-    <script src="/static/app.js?v=34"></script>
+    <script src="/static/app.js?v=37"></script>
 </body>
 </html>
 

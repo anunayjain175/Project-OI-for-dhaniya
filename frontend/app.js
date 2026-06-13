@@ -89,6 +89,129 @@ function isSameDayIST(epochSeconds1, epochSeconds2) {
            date1.getUTCFullYear() === date2.getUTCFullYear();
 }
 
+// ===== Technical Indicator Calculations =====
+function calcSMA(data, period) {
+    const result = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < period - 1) {
+            result.push(null);
+        } else {
+            let sum = 0;
+            for (let j = i - period + 1; j <= i; j++) {
+                sum += data[j].close;
+            }
+            result.push({ time: data[i].time, value: sum / period });
+        }
+    }
+    return result.filter(v => v !== null);
+}
+
+function calcEMA(data, period) {
+    const result = [];
+    const multiplier = 2 / (period + 1);
+    let ema = null;
+    for (let i = 0; i < data.length; i++) {
+        if (i < period - 1) {
+            result.push(null);
+        } else if (i === period - 1) {
+            let sum = 0;
+            for (let j = 0; j < period; j++) sum += data[j].close;
+            ema = sum / period;
+            result.push({ time: data[i].time, value: ema });
+        } else {
+            ema = (data[i].close - ema) * multiplier + ema;
+            result.push({ time: data[i].time, value: ema });
+        }
+    }
+    return result.filter(v => v !== null);
+}
+
+function calcRSI(data, period = 14) {
+    const result = [];
+    if (data.length === 0) return result;
+    
+    // Fill the warmup period with null values to preserve index alignment
+    const limit = Math.min(data.length, period);
+    for (let i = 0; i < limit; i++) {
+        result.push({ time: data[i].time, value: null });
+    }
+    
+    if (data.length < period + 1) return result;
+    
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= period; i++) {
+        const change = data[i].close - data[i - 1].close;
+        if (change > 0) gains += change;
+        else losses -= change;
+    }
+    
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    
+    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    let rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + rs));
+    result.push({ time: data[period].time, value: rsi });
+    
+    for (let i = period + 1; i < data.length; i++) {
+        const change = data[i].close - data[i - 1].close;
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        
+        rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + rs));
+        result.push({ time: data[i].time, value: rsi });
+    }
+    return result;
+}
+
+function calcATR(data, period = 14) {
+    const result = [];
+    if (data.length === 0) return result;
+    
+    if (data.length < 2) {
+        for (let i = 0; i < data.length; i++) {
+            result.push({ time: data[i].time, value: null });
+        }
+        return result;
+    }
+    
+    const trValues = [];
+    trValues.push({
+        time: data[0].time,
+        value: data[0].high - data[0].low
+    });
+    
+    for (let i = 1; i < data.length; i++) {
+        const tr = Math.max(
+            data[i].high - data[i].low,
+            Math.abs(data[i].high - data[i - 1].close),
+            Math.abs(data[i].low - data[i - 1].close)
+        );
+        trValues.push({ time: data[i].time, value: tr });
+    }
+    
+    const limit = Math.min(data.length, period);
+    for (let i = 0; i < limit; i++) {
+        result.push({ time: data[i].time, value: null });
+    }
+    
+    if (trValues.length < period) return result;
+    
+    let atr = 0;
+    for (let i = 0; i < period; i++) atr += trValues[i].value;
+    atr /= period;
+    result[period - 1] = { time: trValues[period - 1].time, value: atr };
+    
+    for (let i = period; i < trValues.length; i++) {
+        atr = (atr * (period - 1) + trValues[i].value) / period;
+        result.push({ time: trValues[i].time, value: atr });
+    }
+    return result;
+}
+
 // Global State
 let socket = null;
 let currentSymbol = "JEERA-FUT";
@@ -105,11 +228,34 @@ let isSyncingSuspended = false;
 // Charts Instances
 let priceChart = null;
 let oiChart = null;
+let rsiChart = null;
+let atrChart = null;
 
 // Chart Series
 let candlestickSeries = null;
 let volumeSeries = null;
 let oiSeries = null;
+let rsiSeries = null;
+let atrSeries = null;
+let rsiOverboughtLine = null;
+let rsiOversoldLine = null;
+let rsiMiddleLine = null;
+
+// MA line series on price chart
+let maSeriesMap = {};
+const MA_CONFIG = [
+    { type: 'SMA', period: 5, color: '#4caf50', visible: false },
+    { type: 'SMA', period: 10, color: '#8bc34a', visible: false },
+    { type: 'SMA', period: 21, color: '#ffeb3b', visible: false },
+    { type: 'SMA', period: 50, color: '#ff9800', visible: false },
+    { type: 'SMA', period: 200, color: '#e91e63', visible: false },
+    { type: 'EMA', period: 5, color: '#03a9f4', visible: false },
+    { type: 'EMA', period: 9, color: '#00bcd4', visible: false },
+    { type: 'EMA', period: 10, color: '#009688', visible: false },
+    { type: 'EMA', period: 21, color: '#9c27b0', visible: false },
+    { type: 'EMA', period: 50, color: '#673ab7', visible: false },
+    { type: 'EMA', period: 200, color: '#f44336', visible: false },
+];
 
 // Cached baseline data for calculating net daily changes
 let startingOI = null;
@@ -226,10 +372,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         chartSymbolNameEl.innerText = `${currentSymbol} LIVE CHART`;
     }
     
-    // 2. Initialize Lightweight Price Chart & OI Chart
+    // 2. Initialize Lightweight Price Chart, OI Chart & Indicator Charts
     console.log("App startup: initializing Lightweight charts...");
     initPriceChart();
     initOIChart();
+    initRSIChart();
+    initATRChart();
     setupChartSynchronization();
     
     // 3. Setup Events
@@ -294,6 +442,13 @@ function setupEventListeners() {
         if (candlestickSeries) candlestickSeries.setData([]);
         if (volumeSeries) volumeSeries.setData([]);
         if (oiSeries) oiSeries.setData([]);
+        // Clear indicator series
+        Object.values(maSeriesMap).forEach(ma => ma.series.setData([]));
+        if (rsiSeries) rsiSeries.setData([]);
+        if (rsiOverboughtLine) rsiOverboughtLine.setData([]);
+        if (rsiOversoldLine) rsiOversoldLine.setData([]);
+        if (rsiMiddleLine) rsiMiddleLine.setData([]);
+        if (atrSeries) atrSeries.setData([]);
         
         await loadOIHistory(currentSymbol);
         await loadCommodityCurveHistory(currentSymbol);
@@ -501,6 +656,8 @@ function setupEventListeners() {
                 await fetchConfig();
                 initPriceChart();
                 initOIChart();
+                initRSIChart();
+                initATRChart();
                 setupChartSynchronization();
                 await loadOIHistory(currentSymbol);
                 await loadCommodityCurveHistory(currentSymbol);
@@ -588,10 +745,12 @@ function setupEventListeners() {
             
             // Sync the visible logical range after a tiny delay to allow the layout to calculate
             setTimeout(() => {
-                if (priceChart && oiChart) {
+                if (priceChart) {
                     const range = priceChart.timeScale().getVisibleLogicalRange();
                     if (range) {
-                        oiChart.timeScale().setVisibleLogicalRange(range);
+                        if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
+                        if (rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
+                        if (atrChart) atrChart.timeScale().setVisibleLogicalRange(range);
                     }
                 }
                 setTimeout(() => {
@@ -600,6 +759,122 @@ function setupEventListeners() {
             }, 100);
         });
     });
+
+    // Indicator dropdown toggle
+    const indicatorToggleBtn = document.getElementById('indicator-toggle-btn');
+    const indicatorDropdownMenu = document.getElementById('indicator-dropdown-menu');
+    if (indicatorToggleBtn && indicatorDropdownMenu) {
+        indicatorToggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            indicatorDropdownMenu.classList.toggle('open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!indicatorDropdownMenu.contains(e.target) && e.target !== indicatorToggleBtn) {
+                indicatorDropdownMenu.classList.remove('open');
+            }
+        });
+    }
+
+    // Populate MA checkboxes grouped by SMA and EMA
+    const maCheckboxContainer = document.getElementById('ma-checkboxes');
+    if (maCheckboxContainer) {
+        const smaGroup = MA_CONFIG.filter(ma => ma.type === 'SMA');
+        const emaGroup = MA_CONFIG.filter(ma => ma.type === 'EMA');
+
+        function createMACheckbox(ma, container) {
+            const key = `${ma.type}_${ma.period}`;
+            const label = document.createElement('label');
+            label.className = 'indicator-checkbox';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = ma.visible;
+            checkbox.id = `toggle-ma-${key}`;
+            const dot = document.createElement('span');
+            dot.className = 'indicator-color-dot';
+            dot.style.backgroundColor = ma.color;
+            if (ma.type === 'EMA') {
+                dot.style.borderBottom = '2px dashed ' + ma.color;
+                dot.style.backgroundColor = 'transparent';
+                dot.style.height = '0';
+            }
+            label.appendChild(checkbox);
+            label.appendChild(dot);
+            label.appendChild(document.createTextNode(` ${ma.period}`));
+            container.appendChild(label);
+
+            checkbox.addEventListener('change', () => {
+                const maEntry = maSeriesMap[key];
+                if (maEntry) {
+                    maEntry.visible = checkbox.checked;
+                    maEntry.series.applyOptions({ visible: checkbox.checked });
+                }
+            });
+        }
+
+        // SMA sub-header
+        const smaHeader = document.createElement('div');
+        smaHeader.className = 'indicator-sub-title';
+        smaHeader.textContent = 'SMA (Simple)';
+        maCheckboxContainer.appendChild(smaHeader);
+        smaGroup.forEach(ma => createMACheckbox(ma, maCheckboxContainer));
+
+        // EMA sub-header
+        const emaHeader = document.createElement('div');
+        emaHeader.className = 'indicator-sub-title';
+        emaHeader.textContent = 'EMA (Exponential)';
+        maCheckboxContainer.appendChild(emaHeader);
+        emaGroup.forEach(ma => createMACheckbox(ma, maCheckboxContainer));
+    }
+
+    // RSI toggle
+    const toggleRsi = document.getElementById('toggle-rsi');
+    if (toggleRsi) {
+        toggleRsi.addEventListener('change', () => {
+            const rsiContainer = document.getElementById('rsi-chart');
+            if (rsiContainer) {
+                rsiContainer.style.display = toggleRsi.checked ? '' : 'none';
+                if (toggleRsi.checked && priceChart && rsiChart) {
+                    setTimeout(() => {
+                        try {
+                            const rect = rsiContainer.getBoundingClientRect();
+                            rsiChart.resize(rect.width, rect.height);
+                            const range = priceChart.timeScale().getVisibleLogicalRange();
+                            if (range) {
+                                rsiChart.timeScale().setVisibleLogicalRange(range);
+                            }
+                        } catch (e) {
+                            console.error("Error resizing/syncing RSI:", e);
+                        }
+                    }, 50);
+                }
+            }
+        });
+    }
+
+    // ATR toggle
+    const toggleAtr = document.getElementById('toggle-atr');
+    if (toggleAtr) {
+        toggleAtr.addEventListener('change', () => {
+            const atrContainer = document.getElementById('atr-chart');
+            if (atrContainer) {
+                atrContainer.style.display = toggleAtr.checked ? '' : 'none';
+                if (toggleAtr.checked && priceChart && atrChart) {
+                    setTimeout(() => {
+                        try {
+                            const rect = atrContainer.getBoundingClientRect();
+                            atrChart.resize(rect.width, rect.height);
+                            const range = priceChart.timeScale().getVisibleLogicalRange();
+                            if (range) {
+                                atrChart.timeScale().setVisibleLogicalRange(range);
+                            }
+                        } catch (e) {
+                            console.error("Error resizing/syncing ATR:", e);
+                        }
+                    }, 50);
+                }
+            }
+        });
+    }
 }
 
 
@@ -766,6 +1041,23 @@ function initPriceChart() {
         },
     });
 
+    // Initialize MA line series on price chart
+    maSeriesMap = {};
+    MA_CONFIG.forEach(ma => {
+        const key = `${ma.type}_${ma.period}`;
+        const series = priceChart.addLineSeries({
+            color: ma.color,
+            lineWidth: 1,
+            lineStyle: ma.type === 'EMA' ? 2 : 0,
+            title: '',
+            visible: ma.visible,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+        });
+        maSeriesMap[key] = { series, visible: ma.visible, config: ma };
+    });
+
     // Resize Observer
     const resizeObserver = new ResizeObserver(entries => {
         if (priceChart) {
@@ -780,6 +1072,10 @@ let priceLogicalRangeChangeHandler = null;
 let oiLogicalRangeChangeHandler = null;
 let priceCrosshairMoveHandler = null;
 let oiCrosshairMoveHandler = null;
+let rsiLogicalRangeChangeHandler = null;
+let atrLogicalRangeChangeHandler = null;
+let rsiCrosshairMoveHandler = null;
+let atrCrosshairMoveHandler = null;
 
 function setupChartSynchronization() {
     if (!priceChart || !oiChart) {
@@ -787,80 +1083,121 @@ function setupChartSynchronization() {
         return;
     }
 
+    // Helper to check chart container visibility to prevent syncing issues with hidden/0-size charts
+    function isChartVisible(chart) {
+        if (chart === priceChart) return true;
+        if (chart === oiChart) return true;
+        if (chart === rsiChart) {
+            const toggleRsi = document.getElementById('toggle-rsi');
+            return toggleRsi ? toggleRsi.checked : false;
+        }
+        if (chart === atrChart) {
+            const toggleAtr = document.getElementById('toggle-atr');
+            return toggleAtr ? toggleAtr.checked : false;
+        }
+        return false;
+    }
+
+    // All charts to sync
+    const allCharts = [priceChart, oiChart, rsiChart, atrChart].filter(c => c !== null);
+
     // Unsubscribe previous handlers if they exist to prevent memory leaks and multiple triggers
     if (priceLogicalRangeChangeHandler) {
-        try {
-            priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(priceLogicalRangeChangeHandler);
-        } catch(e) {}
+        try { priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(priceLogicalRangeChangeHandler); } catch(e) {}
     }
     if (oiLogicalRangeChangeHandler) {
-        try {
-            oiChart.timeScale().unsubscribeVisibleLogicalRangeChange(oiLogicalRangeChangeHandler);
-        } catch(e) {}
+        try { oiChart.timeScale().unsubscribeVisibleLogicalRangeChange(oiLogicalRangeChangeHandler); } catch(e) {}
+    }
+    if (rsiLogicalRangeChangeHandler && rsiChart) {
+        try { rsiChart.timeScale().unsubscribeVisibleLogicalRangeChange(rsiLogicalRangeChangeHandler); } catch(e) {}
+    }
+    if (atrLogicalRangeChangeHandler && atrChart) {
+        try { atrChart.timeScale().unsubscribeVisibleLogicalRangeChange(atrLogicalRangeChangeHandler); } catch(e) {}
     }
     if (priceCrosshairMoveHandler) {
-        try {
-            priceChart.unsubscribeCrosshairMove(priceCrosshairMoveHandler);
-        } catch(e) {}
+        try { priceChart.unsubscribeCrosshairMove(priceCrosshairMoveHandler); } catch(e) {}
     }
     if (oiCrosshairMoveHandler) {
-        try {
-            oiChart.unsubscribeCrosshairMove(oiCrosshairMoveHandler);
-        } catch(e) {}
+        try { oiChart.unsubscribeCrosshairMove(oiCrosshairMoveHandler); } catch(e) {}
+    }
+    if (rsiCrosshairMoveHandler && rsiChart) {
+        try { rsiChart.unsubscribeCrosshairMove(rsiCrosshairMoveHandler); } catch(e) {}
+    }
+    if (atrCrosshairMoveHandler && atrChart) {
+        try { atrChart.unsubscribeCrosshairMove(atrCrosshairMoveHandler); } catch(e) {}
     }
 
     let isSyncing = false;
 
-    // Define new handlers
-    priceLogicalRangeChangeHandler = (range) => {
-        if (isSyncingSuspended || isSyncing || !range) return;
-        isSyncing = true;
-        oiChart.timeScale().setVisibleLogicalRange(range);
-        isSyncing = false;
-    };
+    // Helper to sync range from one chart to all others
+    function syncRangeFrom(sourceChart) {
+        return (range) => {
+            if (isSyncingSuspended || isSyncing || !range) return;
+            isSyncing = true;
+            allCharts.forEach(c => {
+                if (c !== sourceChart && isChartVisible(c)) {
+                    try { c.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                }
+            });
+            isSyncing = false;
+        };
+    }
 
-    oiLogicalRangeChangeHandler = (range) => {
-        if (isSyncingSuspended || isSyncing || !range) return;
-        isSyncing = true;
-        priceChart.timeScale().setVisibleLogicalRange(range);
-        isSyncing = false;
-    };
+    // Helper to sync crosshair from one chart to all others
+    function syncCrosshairFrom(sourceChart, sourceSeries) {
+        return (param) => {
+            if (isSyncingSuspended || isSyncing) return;
+            isSyncing = true;
+            if (param.time) {
+                // Set crosshair on all other charts
+                if (sourceChart !== oiChart && oiChart && oiSeries) oiChart.setCrosshairPosition(0, param.time, oiSeries);
+                if (sourceChart !== priceChart && priceChart && candlestickSeries) priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
+                if (sourceChart !== rsiChart && rsiChart && rsiSeries && isChartVisible(rsiChart)) rsiChart.setCrosshairPosition(0, param.time, rsiSeries);
+                if (sourceChart !== atrChart && atrChart && atrSeries && isChartVisible(atrChart)) atrChart.setCrosshairPosition(0, param.time, atrSeries);
+                isCrosshairActive = true;
+                if (sourceChart === priceChart || sourceChart === oiChart) {
+                    updateLegendValues(param);
+                }
+            } else {
+                allCharts.forEach(c => {
+                    if (c !== sourceChart && isChartVisible(c)) {
+                        try { c.clearCrosshairPosition(); } catch(e) {}
+                    }
+                });
+                isCrosshairActive = false;
+                clearLegendValues();
+            }
+            isSyncing = false;
+        };
+    }
 
-    priceCrosshairMoveHandler = (param) => {
-        if (isSyncingSuspended || isSyncing) return;
-        isSyncing = true;
-        if (param.time) {
-            oiChart.setCrosshairPosition(0, param.time, oiSeries);
-            isCrosshairActive = true;
-            updateLegendValues(param);
-        } else {
-            oiChart.clearCrosshairPosition();
-            isCrosshairActive = false;
-            clearLegendValues();
-        }
-        isSyncing = false;
-    };
+    // Define handlers
+    priceLogicalRangeChangeHandler = syncRangeFrom(priceChart);
+    oiLogicalRangeChangeHandler = syncRangeFrom(oiChart);
+    priceCrosshairMoveHandler = syncCrosshairFrom(priceChart, candlestickSeries);
+    oiCrosshairMoveHandler = syncCrosshairFrom(oiChart, oiSeries);
 
-    oiCrosshairMoveHandler = (param) => {
-        if (isSyncingSuspended || isSyncing) return;
-        isSyncing = true;
-        if (param.time) {
-            priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
-            isCrosshairActive = true;
-            updateLegendValues(param);
-        } else {
-            priceChart.clearCrosshairPosition();
-            isCrosshairActive = false;
-            clearLegendValues();
-        }
-        isSyncing = false;
-    };
-
-    // Subscribe
+    // Subscribe price and OI
     priceChart.timeScale().subscribeVisibleLogicalRangeChange(priceLogicalRangeChangeHandler);
     oiChart.timeScale().subscribeVisibleLogicalRangeChange(oiLogicalRangeChangeHandler);
     priceChart.subscribeCrosshairMove(priceCrosshairMoveHandler);
     oiChart.subscribeCrosshairMove(oiCrosshairMoveHandler);
+
+    // Subscribe RSI
+    if (rsiChart) {
+        rsiLogicalRangeChangeHandler = syncRangeFrom(rsiChart);
+        rsiCrosshairMoveHandler = syncCrosshairFrom(rsiChart, rsiSeries);
+        rsiChart.timeScale().subscribeVisibleLogicalRangeChange(rsiLogicalRangeChangeHandler);
+        rsiChart.subscribeCrosshairMove(rsiCrosshairMoveHandler);
+    }
+
+    // Subscribe ATR
+    if (atrChart) {
+        atrLogicalRangeChangeHandler = syncRangeFrom(atrChart);
+        atrCrosshairMoveHandler = syncCrosshairFrom(atrChart, atrSeries);
+        atrChart.timeScale().subscribeVisibleLogicalRangeChange(atrLogicalRangeChangeHandler);
+        atrChart.subscribeCrosshairMove(atrCrosshairMoveHandler);
+    }
 }
 
 // Initialize Open Interest chart under TradingView pane
@@ -943,6 +1280,199 @@ function initOIChart() {
         }
     });
     resizeObserver.observe(oiContainer);
+}
+
+// Shared chart options builder for indicator panes
+function getIndicatorChartOptions() {
+    return {
+        layout: {
+            background: { type: 'solid', color: 'transparent' },
+            textColor: '#d1d5db',
+        },
+        grid: {
+            vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+            horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        timeScale: {
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            timeVisible: true,
+            secondsVisible: false,
+            fixRightEdge: false,
+            fixLeftEdge: false,
+            tickMarkFormatter: (time, tickMarkType, locale) => {
+                const date = new Date(time * 1000);
+                if (tickMarkType < 3) {
+                    const day = String(date.getUTCDate()).padStart(2, '0');
+                    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+                    return `${day}/${month}`;
+                } else {
+                    const hours = String(date.getUTCHours()).padStart(2, '0');
+                    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                    return `${hours}:${minutes}`;
+                }
+            }
+        },
+        localization: {
+            timeFormatter: (time) => {
+                const date = new Date(time * 1000);
+                const hours = String(date.getUTCHours()).padStart(2, '0');
+                const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                const day = String(date.getUTCDate()).padStart(2, '0');
+                const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+                return `${day}/${month} ${hours}:${minutes}`;
+            }
+        }
+    };
+}
+
+// Initialize RSI chart pane
+function initRSIChart() {
+    if (rsiChart) {
+        try { rsiChart.remove(); } catch (e) {}
+        rsiChart = null;
+    }
+    const rsiContainer = document.getElementById('rsi-chart');
+    rsiContainer.innerHTML = '';
+
+    // Add pane label
+    const label = document.createElement('div');
+    label.className = 'indicator-pane-label';
+    label.innerText = 'RSI (14)';
+    rsiContainer.appendChild(label);
+
+    rsiChart = LightweightCharts.createChart(rsiContainer, {
+        ...getIndicatorChartOptions(),
+        rightPriceScale: {
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            scaleMargins: { top: 0.08, bottom: 0.08 },
+            minimumWidth: 90,
+        }
+    });
+
+    rsiSeries = rsiChart.addLineSeries({
+        color: '#7c4dff',
+        lineWidth: 2,
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+    });
+
+    // Overbought line (70)
+    rsiOverboughtLine = rsiChart.addLineSeries({
+        color: 'rgba(255, 23, 68, 0.5)',
+        lineWidth: 1,
+        lineStyle: 1,
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+    });
+
+    // Oversold line (30)
+    rsiOversoldLine = rsiChart.addLineSeries({
+        color: 'rgba(0, 230, 118, 0.5)',
+        lineWidth: 1,
+        lineStyle: 1,
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+    });
+
+    // Middle line (50)
+    rsiMiddleLine = rsiChart.addLineSeries({
+        color: 'rgba(255, 255, 255, 0.2)',
+        lineWidth: 1,
+        lineStyle: 1,
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+    });
+
+    const rsiResizeObserver = new ResizeObserver(() => {
+        if (rsiChart) {
+            rsiChart.resize(rsiContainer.getBoundingClientRect().width, rsiContainer.getBoundingClientRect().height);
+        }
+    });
+    rsiResizeObserver.observe(rsiContainer);
+}
+
+// Initialize ATR chart pane
+function initATRChart() {
+    if (atrChart) {
+        try { atrChart.remove(); } catch (e) {}
+        atrChart = null;
+    }
+    const atrContainer = document.getElementById('atr-chart');
+    atrContainer.innerHTML = '';
+
+    // Add pane label
+    const label = document.createElement('div');
+    label.className = 'indicator-pane-label';
+    label.innerText = 'ATR (14)';
+    atrContainer.appendChild(label);
+
+    atrChart = LightweightCharts.createChart(atrContainer, {
+        ...getIndicatorChartOptions(),
+        rightPriceScale: {
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            scaleMargins: { top: 0.1, bottom: 0.05 },
+            minimumWidth: 90,
+        }
+    });
+
+    atrSeries = atrChart.addHistogramSeries({
+        color: '#26a69a',
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: true,
+    });
+
+    const atrResizeObserver = new ResizeObserver(() => {
+        if (atrChart) {
+            atrChart.resize(atrContainer.getBoundingClientRect().width, atrContainer.getBoundingClientRect().height);
+        }
+    });
+    atrResizeObserver.observe(atrContainer);
+}
+
+// Calculate and render all indicators
+function updateIndicators(data) {
+    if (!data || data.length === 0) return;
+    
+    // Update MAs
+    Object.keys(maSeriesMap).forEach(key => {
+        const ma = maSeriesMap[key];
+        const [type, periodStr] = key.split('_');
+        const period = parseInt(periodStr);
+        const values = type === 'SMA' ? calcSMA(data, period) : calcEMA(data, period);
+        ma.series.setData(values);
+    });
+    
+    // Update RSI
+    if (rsiSeries) {
+        const rsiData = calcRSI(data, 14);
+        rsiSeries.setData(rsiData);
+        
+        if (rsiData.length > 0) {
+            const firstTime = rsiData[0].time;
+            const lastTime = rsiData[rsiData.length - 1].time;
+            if (rsiOverboughtLine) rsiOverboughtLine.setData([{time: firstTime, value: 70}, {time: lastTime, value: 70}]);
+            if (rsiOversoldLine) rsiOversoldLine.setData([{time: firstTime, value: 30}, {time: lastTime, value: 30}]);
+            if (rsiMiddleLine) rsiMiddleLine.setData([{time: firstTime, value: 50}, {time: lastTime, value: 50}]);
+        }
+    }
+    
+    // Update ATR
+    if (atrSeries) {
+        const atrData = calcATR(data, 14);
+        atrSeries.setData(atrData);
+    }
 }
 
 // Apply timeframe aggregation and render to chart
@@ -1055,6 +1585,9 @@ function applyTimeframe(timeframeMinutes) {
     // Cache for crosshair legend lookup
     currentHistoryData = aggregated;
     
+    // Calculate and render indicators
+    updateIndicators(aggregated);
+    
     // Reset active interval aggregation based on the last tick to support live ticks
     if (ticks1m.length > 0) {
         const lastTick1m = ticks1m[ticks1m.length - 1];
@@ -1149,6 +1682,14 @@ async function loadOIHistory(symbol) {
             oiChart.priceScale('right').applyOptions({ autoScale: true });
             oiChart.timeScale().fitContent();
         }
+        if (rsiChart) {
+            rsiChart.priceScale('right').applyOptions({ autoScale: true });
+            rsiChart.timeScale().fitContent();
+        }
+        if (atrChart) {
+            atrChart.priceScale('right').applyOptions({ autoScale: true });
+            atrChart.timeScale().fitContent();
+        }
         
         if (raw1mHistory && raw1mHistory.length > 0) {
             lastLiveVolume = raw1mHistory[raw1mHistory.length - 1].volume;
@@ -1160,10 +1701,12 @@ async function loadOIHistory(symbol) {
         
         // Sync the visible logical range after a tiny delay to allow the layout to calculate
         setTimeout(() => {
-            if (priceChart && oiChart) {
+            if (priceChart) {
                 const range = priceChart.timeScale().getVisibleLogicalRange();
                 if (range) {
-                    oiChart.timeScale().setVisibleLogicalRange(range);
+                    if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
+                    if (rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
+                    if (atrChart) atrChart.timeScale().setVisibleLogicalRange(range);
                 }
             }
             setTimeout(() => {
@@ -1382,6 +1925,9 @@ function handleLiveTick(tick) {
                 oi: tick.oi
             });
         }
+
+        // Update indicators with live data
+        updateIndicators(currentHistoryData);
 
         // If crosshair is not active, keep legend updated to show the latest live tick info
         if (!isCrosshairActive) {

@@ -371,7 +371,7 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
     # Sort chronologically
     return sorted(candles.values(), key=lambda x: x["time"])
 
-def prune_ticks(days_to_keep: int = 35):
+def prune_ticks(days_to_keep: int = 1825):
     """Deletes ticks older than the specified number of days to prevent database bloat."""
     conn = get_db_connection()
     cursor = get_cursor(conn)

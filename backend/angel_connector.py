@@ -741,8 +741,26 @@ class AngelConnector:
 def fetch_and_cache_scrip_master():
     url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
     try:
-        # Check if file exists, is large enough (> 1MB), and was updated in the last 24h
-        if os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024 * 1024:
+        # 1. If file exists and is raw (> 2MB), filter it immediately
+        if os.path.exists(INSTRUMENT_MASTER_PATH):
+            size = os.path.getsize(INSTRUMENT_MASTER_PATH)
+            if size > 2 * 1024 * 1024:
+                print(f"AngelConnector: Found large raw scrip master ({size} bytes). Filtering to NCDEX only...")
+                try:
+                    with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
+                        full_master = json.load(f)
+                    filtered_master = [
+                        item for item in full_master
+                        if item.get("exch_seg") == "NCDEX"
+                    ]
+                    with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
+                        json.dump(filtered_master, f, indent=2)
+                    print(f"AngelConnector: Successfully filtered existing master to {len(filtered_master)} NCDEX instruments.")
+                except Exception as e:
+                    print(f"AngelConnector: Error filtering existing master: {e}")
+
+        # 2. Check if file exists, is valid (> 1KB), and was updated in the last 24h
+        if os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024:
             mtime = os.path.getmtime(INSTRUMENT_MASTER_PATH)
             if time.time() - mtime < 86400:
                 return True
@@ -750,15 +768,20 @@ def fetch_and_cache_scrip_master():
         print("AngelConnector: Downloading fresh scrip master from margincalculator...")
         r = requests.get(url, timeout=25)
         if r.status_code == 200:
+            full_master = r.json()
+            filtered_master = [
+                item for item in full_master
+                if item.get("exch_seg") == "NCDEX"
+            ]
             with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
-                f.write(r.text)
-            print(f"AngelConnector: Downloaded and saved scrip master ({len(r.text)} bytes)")
+                json.dump(filtered_master, f, indent=2)
+            print(f"AngelConnector: Downloaded and saved filtered scrip master ({len(filtered_master)} NCDEX instruments)")
             return True
     except Exception as e:
         print(f"AngelConnector: Failed to update scrip master: {e}")
     
-    # Final fallback check: if file exists and is > 1MB
-    return os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024 * 1024
+    # Final fallback check: if file exists and is > 1KB
+    return os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024
 
 def resolve_angel_token(symbol_name):
     if not fetch_and_cache_scrip_master():

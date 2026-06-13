@@ -304,17 +304,39 @@ body {
 }
 
 .chart-pane {
-    flex: 7;
+    flex: 5;
     width: 100%;
     min-height: 0;
 }
 
 .chart-pane-oi {
-    flex: 3;
+    flex: 2;
     width: 100%;
     border-top: 1px solid var(--border-color);
-    padding-top: 6px;
+    padding-top: 4px;
     min-height: 0;
+}
+
+.chart-pane-indicator {
+    flex: 1.5;
+    width: 100%;
+    border-top: 1px solid var(--border-color);
+    padding-top: 4px;
+    min-height: 0;
+    position: relative;
+}
+
+.indicator-pane-label {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    z-index: 5;
+    pointer-events: none;
+    text-transform: uppercase;
 }
 
 /* Tabs & F&O Details Section */
@@ -680,6 +702,110 @@ body {
     border-color: var(--color-accent);
 }
 
+/* Indicator Controls Dropdown */
+.indicator-controls {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-right: 12px;
+}
+
+.indicator-dropdown {
+    position: relative;
+}
+
+.indicator-toggle-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    font-family: var(--font-family);
+}
+
+.indicator-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+.indicator-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 6px;
+    background: #1a1d27;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 220px;
+    max-height: 400px;
+    overflow-y: auto;
+    z-index: 1000;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.indicator-dropdown-menu.open {
+    display: block;
+}
+
+.indicator-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.indicator-sub-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-accent);
+    margin: 6px 0 4px 0;
+    padding-left: 2px;
+    letter-spacing: 0.5px;
+}
+
+.indicator-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+.indicator-checkbox:hover {
+    color: #ffffff;
+}
+
+.indicator-checkbox input[type="checkbox"] {
+    accent-color: var(--color-accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.indicator-color-dot {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
 /* Modal Popup Window */
 .modal {
     display: none;
@@ -893,12 +1019,17 @@ body {
     
     /* Set fixed minimum heights for charts so they are visible and usable */
     .chart-pane {
-        height: 330px;
+        height: 300px;
         flex: none;
     }
     
     .chart-pane-oi {
-        height: 180px;
+        height: 140px;
+        flex: none;
+    }
+
+    .chart-pane-indicator {
+        height: 100px;
         flex: none;
     }
     
