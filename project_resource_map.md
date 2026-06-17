@@ -95,3 +95,49 @@ NCDEX sessions run Monday-Friday, starting at **10:00 AM IST**. If there is miss
 >
 > **3. Target line ranges in reads**
 > Use `StartLine` and `EndLine` parameters in `view_file` to inspect code. Avoid loading the entire content of large files like `app.js` or `main.py` in single operations.
+
+---
+
+## 🖥️ Server Deployment & VM Memory Constraints (OCI Free Tier)
+
+> [!IMPORTANT]
+> **1. Memory Limits & Swap Space**
+> OCI AMD Compute Instances (`VM.Standard.E2.1.Micro`) only have **1 GB RAM**. To prevent system freezes during package installations, **ensure swap space is active** (at least 1.5 GB). Use `swapon --show` to verify active swapfiles.
+>
+> **2. DNF Package Manager Memory Optimizations**
+> The DNF package manager is extremely heavy on RAM when loading repo metadata, which can easily trigger Out-Of-Memory (OOM) lockups on a 1GB VM shape.
+> * Always run `sudo dnf clean all` before installing.
+> * **NEVER** let DNF load all default repositories (especially `ol9_ksplice` and `ol9_oci_included` metadata, which are massive).
+> * Explicitly exclude heavy repositories when running installation commands:
+>   `sudo dnf install -y <packages> --disablerepo=ol9_ksplice --disablerepo=ol9_oci_included --disablerepo=ol9_addons --disablerepo=ol9_codeready`
+>
+> **3. Safe Deployment Protocol (Preventing Freezes)**
+> Due to heavy RAM and disk I/O constraints on the OCI micro shape, always stop the active FastAPI service prior to pulling repository updates or installing new dependencies. This frees memory and stops active database writes:
+> *   **Step 1 (Stop Service)**: `sudo systemctl stop ncdex`
+> *   **Step 2 (Pull & Update)**: `git pull` (and run dependency installations/migrations if needed)
+> *   **Step 3 (Start Service)**: `sudo systemctl start ncdex`
+
+---
+
+## 🌐 Production Deployment Infrastructure Reference
+
+### 1. Host Information
+* **Public IP**: `80.225.245.57` (Oracle Cloud VM, `opc` user, standard SSH key)
+* **Domain**: `80-225-245-57.sslip.io` (Resolves to the VM IP)
+* **Ports**: Port `80` (HTTP) redirects to HTTPS, Port `443` (HTTPS) is open to the public.
+
+### 2. Nginx Reverse Proxy
+* **Configuration File**: `/etc/nginx/conf.d/ncdex.conf`
+* **Purpose**: Performs SSL termination and routes traffic to FastAPI on port 8000.
+* **WebSocket Proxies**: Location `/ws` is configured with `Upgrade` and `Connection` headers to support live WebSocket data streaming.
+
+### 3. Let's Encrypt SSL
+* **Cert Path**: `/etc/letsencrypt/live/80-225-245-57.sslip.io/fullchain.pem`
+* **Key Path**: `/etc/letsencrypt/live/80-225-245-57.sslip.io/privkey.pem`
+* **Authenticator**: Certbot standalone (runs renewals automatically using `certbot-renew.timer`).
+
+### 4. FastAPI Service (systemd)
+* **Service File**: `/etc/systemd/system/ncdex.service`
+* **Port**: Bound to `127.0.0.1:8000` (localhost only).
+* **Execution User**: Runs as `opc` user for security.
+* **Database Ownership**: The database `/home/opc/Project-OI-for-dhaniya/backend/oi_history.db` must belong to the `opc:opc` user. If owned by `root`, SQLite writes will fail, causing the service to lock up in an infinite database connection retry loop.
