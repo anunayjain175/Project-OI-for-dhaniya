@@ -5,6 +5,12 @@ let isSendingLog = false;
 
 async function sendClientLog(level, message) {
     if (isSendingLog) return;
+    // Filter out high-frequency logs to prevent flooding the server deque buffer
+    if (message.includes("Client WS: Received tick") || 
+        message.includes("Polling stats data for") || 
+        message.includes("syncRangeFrom:")) {
+        return;
+    }
     isSendingLog = true;
     try {
         await fetch("/api/client-log", {
@@ -223,6 +229,7 @@ let isCrosshairActive = false;
 let raw1mHistory = [];
 let currentTimeframe = 5; // Default to 5-minute (5m) timeframe
 let isSyncingSuspended = false;
+let isSyncingRange = false;
 
 
 // Charts Instances
@@ -745,17 +752,28 @@ function setupEventListeners() {
             
             // Sync the visible logical range after a tiny delay to allow the layout to calculate
             setTimeout(() => {
-                if (priceChart) {
-                    const range = priceChart.timeScale().getVisibleLogicalRange();
-                    if (range) {
-                        if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
-                        if (rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
-                        if (atrChart) atrChart.timeScale().setVisibleLogicalRange(range);
+                try {
+                    if (priceChart) {
+                        const range = priceChart.timeScale().getVisibleLogicalRange();
+                        if (range) {
+                            if (oiChart && isChartVisible(oiChart)) {
+                                try { oiChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing OI range on timeframe change:", e); }
+                            }
+                            if (rsiChart && isChartVisible(rsiChart)) {
+                                try { rsiChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing RSI range on timeframe change:", e); }
+                            }
+                            if (atrChart && isChartVisible(atrChart)) {
+                                try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing ATR range on timeframe change:", e); }
+                            }
+                        }
                     }
+                } catch (err) {
+                    console.error("Error in timeframe range sync callback:", err);
+                } finally {
+                    setTimeout(() => {
+                        isSyncingSuspended = false;
+                    }, 150);
                 }
-                setTimeout(() => {
-                    isSyncingSuspended = false;
-                }, 150);
             }, 100);
         });
     });
@@ -826,6 +844,48 @@ function setupEventListeners() {
         emaGroup.forEach(ma => createMACheckbox(ma, maCheckboxContainer));
     }
 
+    // Helper to resize all visible charts and sync range
+    function resizeAndSyncAllCharts() {
+        setTimeout(() => {
+            try {
+                if (priceChart) {
+                    const container = document.getElementById('price-chart');
+                    if (container) priceChart.resize(container.clientWidth, container.clientHeight);
+                }
+                if (oiChart) {
+                    const container = document.getElementById('oi-chart');
+                    if (container) oiChart.resize(container.clientWidth, container.clientHeight);
+                }
+                if (rsiChart && isChartVisible(rsiChart)) {
+                    const container = document.getElementById('rsi-chart');
+                    if (container) rsiChart.resize(container.clientWidth, container.clientHeight);
+                }
+                if (atrChart && isChartVisible(atrChart)) {
+                    const container = document.getElementById('atr-chart');
+                    if (container) atrChart.resize(container.clientWidth, container.clientHeight);
+                }
+                
+                // Re-sync logical range to maintain alignment
+                if (priceChart) {
+                    const range = priceChart.timeScale().getVisibleLogicalRange();
+                    if (range) {
+                        if (oiChart && isChartVisible(oiChart)) {
+                            try { oiChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                        }
+                        if (rsiChart && isChartVisible(rsiChart)) {
+                            try { rsiChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                        }
+                        if (atrChart && isChartVisible(atrChart)) {
+                            try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error in resizeAndSyncAllCharts:", err);
+            }
+        }, 80); // 80ms delay to allow DOM/flexbox to settle
+    }
+
     // RSI toggle
     const toggleRsi = document.getElementById('toggle-rsi');
     if (toggleRsi) {
@@ -833,20 +893,7 @@ function setupEventListeners() {
             const rsiContainer = document.getElementById('rsi-chart');
             if (rsiContainer) {
                 rsiContainer.style.display = toggleRsi.checked ? '' : 'none';
-                if (toggleRsi.checked && priceChart && rsiChart) {
-                    setTimeout(() => {
-                        try {
-                            const rect = rsiContainer.getBoundingClientRect();
-                            rsiChart.resize(rect.width, rect.height);
-                            const range = priceChart.timeScale().getVisibleLogicalRange();
-                            if (range) {
-                                rsiChart.timeScale().setVisibleLogicalRange(range);
-                            }
-                        } catch (e) {
-                            console.error("Error resizing/syncing RSI:", e);
-                        }
-                    }, 50);
-                }
+                resizeAndSyncAllCharts();
             }
         });
     }
@@ -858,20 +905,7 @@ function setupEventListeners() {
             const atrContainer = document.getElementById('atr-chart');
             if (atrContainer) {
                 atrContainer.style.display = toggleAtr.checked ? '' : 'none';
-                if (toggleAtr.checked && priceChart && atrChart) {
-                    setTimeout(() => {
-                        try {
-                            const rect = atrContainer.getBoundingClientRect();
-                            atrChart.resize(rect.width, rect.height);
-                            const range = priceChart.timeScale().getVisibleLogicalRange();
-                            if (range) {
-                                atrChart.timeScale().setVisibleLogicalRange(range);
-                            }
-                        } catch (e) {
-                            console.error("Error resizing/syncing ATR:", e);
-                        }
-                    }, 50);
-                }
+                resizeAndSyncAllCharts();
             }
         });
     }
@@ -883,36 +917,7 @@ function setupEventListeners() {
             const detailsSection = document.querySelector('.details-section');
             if (detailsSection) {
                 detailsSection.classList.toggle('collapsed');
-                
-                // Trigger chart resizing manually to ensure synchronization is instant and clean
-                setTimeout(() => {
-                    if (priceChart) {
-                        const container = document.getElementById('price-chart');
-                        priceChart.resize(container.clientWidth, container.clientHeight);
-                    }
-                    if (oiChart) {
-                        const container = document.getElementById('oi-chart');
-                        oiChart.resize(container.clientWidth, container.clientHeight);
-                    }
-                    if (rsiChart && toggleRsi && toggleRsi.checked) {
-                        const container = document.getElementById('rsi-chart');
-                        rsiChart.resize(container.clientWidth, container.clientHeight);
-                    }
-                    if (atrChart && toggleAtr && toggleAtr.checked) {
-                        const container = document.getElementById('atr-chart');
-                        atrChart.resize(container.clientWidth, container.clientHeight);
-                    }
-                    
-                    // Re-sync logical range to maintain alignment
-                    if (priceChart) {
-                        const range = priceChart.timeScale().getVisibleLogicalRange();
-                        if (range) {
-                            if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
-                            if (rsiChart && toggleRsi && toggleRsi.checked) rsiChart.timeScale().setVisibleLogicalRange(range);
-                            if (atrChart && toggleAtr && toggleAtr.checked) atrChart.timeScale().setVisibleLogicalRange(range);
-                        }
-                    }
-                }, 50);
+                resizeAndSyncAllCharts();
             }
         });
     }
@@ -1118,25 +1123,26 @@ let atrLogicalRangeChangeHandler = null;
 let rsiCrosshairMoveHandler = null;
 let atrCrosshairMoveHandler = null;
 
+// Helper to check chart container visibility to prevent syncing issues with hidden/0-size charts
+function isChartVisible(chart) {
+    if (!chart) return false;
+    if (chart === priceChart) return true;
+    if (chart === oiChart) return true;
+    if (chart === rsiChart) {
+        const toggleRsi = document.getElementById('toggle-rsi');
+        return toggleRsi ? toggleRsi.checked : false;
+    }
+    if (chart === atrChart) {
+        const toggleAtr = document.getElementById('toggle-atr');
+        return toggleAtr ? toggleAtr.checked : false;
+    }
+    return false;
+}
+
 function setupChartSynchronization() {
     if (!priceChart || !oiChart) {
         console.warn("setupChartSynchronization: priceChart or oiChart not initialized yet. Skipping sync setup.");
         return;
-    }
-
-    // Helper to check chart container visibility to prevent syncing issues with hidden/0-size charts
-    function isChartVisible(chart) {
-        if (chart === priceChart) return true;
-        if (chart === oiChart) return true;
-        if (chart === rsiChart) {
-            const toggleRsi = document.getElementById('toggle-rsi');
-            return toggleRsi ? toggleRsi.checked : false;
-        }
-        if (chart === atrChart) {
-            const toggleAtr = document.getElementById('toggle-atr');
-            return toggleAtr ? toggleAtr.checked : false;
-        }
-        return false;
     }
 
     // All charts to sync
@@ -1173,19 +1179,38 @@ function setupChartSynchronization() {
     // Helper to sync range from one chart to all others
     function syncRangeFrom(sourceChart) {
         return (range) => {
-            if (isSyncingSuspended || !range) return;
-            allCharts.forEach(c => {
-                if (c !== sourceChart && isChartVisible(c)) {
-                    try {
-                        const currentRange = c.timeScale().getVisibleLogicalRange();
-                        if (!currentRange || 
-                            currentRange.from !== range.from || 
-                            currentRange.to !== range.to) {
-                            c.timeScale().setVisibleLogicalRange(range);
+            if (isSyncingSuspended || isSyncingRange || !range) return;
+            isSyncingRange = true;
+            try {
+                const chartName = sourceChart === priceChart ? "Price" : (sourceChart === oiChart ? "OI" : (sourceChart === rsiChart ? "RSI" : "ATR"));
+                console.log(`syncRangeFrom: Triggered by ${chartName} chart with range: from=${range.from}, to=${range.to}`);
+                allCharts.forEach(c => {
+                    if (c !== sourceChart) {
+                        const targetName = c === priceChart ? "Price" : (c === oiChart ? "OI" : (c === rsiChart ? "RSI" : "ATR"));
+                        const visible = isChartVisible(c);
+                        console.log(`syncRangeFrom: Target ${targetName} visible status: ${visible}`);
+                        if (visible) {
+                            try {
+                                const currentRange = c.timeScale().getVisibleLogicalRange();
+                                const currentStr = currentRange ? `from=${currentRange.from}, to=${currentRange.to}` : "null";
+                                console.log(`syncRangeFrom: Target ${targetName} current range: ${currentStr}`);
+                                if (!currentRange || 
+                                    currentRange.from !== range.from || 
+                                    currentRange.to !== range.to) {
+                                    console.log(`syncRangeFrom: Syncing ${targetName} chart to new range.`);
+                                    c.timeScale().setVisibleLogicalRange(range);
+                                } else {
+                                    console.log(`syncRangeFrom: Target ${targetName} range is already in sync. Skipping.`);
+                                }
+                            } catch(e) {
+                                console.error(`syncRangeFrom: Error syncing ${targetName} chart:`, e);
+                            }
                         }
-                    } catch(e) {}
-                }
-            });
+                    }
+                });
+            } finally {
+                isSyncingRange = false;
+            }
         };
     }
 
@@ -1194,26 +1219,29 @@ function setupChartSynchronization() {
         return (param) => {
             if (isSyncingSuspended || isSyncing) return;
             isSyncing = true;
-            if (param.time) {
-                // Set crosshair on all other charts
-                if (sourceChart !== oiChart && oiChart && oiSeries) oiChart.setCrosshairPosition(0, param.time, oiSeries);
-                if (sourceChart !== priceChart && priceChart && candlestickSeries) priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
-                if (sourceChart !== rsiChart && rsiChart && rsiSeries && isChartVisible(rsiChart)) rsiChart.setCrosshairPosition(0, param.time, rsiSeries);
-                if (sourceChart !== atrChart && atrChart && atrSeries && isChartVisible(atrChart)) atrChart.setCrosshairPosition(0, param.time, atrSeries);
-                isCrosshairActive = true;
-                if (sourceChart === priceChart || sourceChart === oiChart) {
-                    updateLegendValues(param);
-                }
-            } else {
-                allCharts.forEach(c => {
-                    if (c !== sourceChart && isChartVisible(c)) {
-                        try { c.clearCrosshairPosition(); } catch(e) {}
+            try {
+                if (param.time) {
+                    // Set crosshair on all other charts
+                    if (sourceChart !== oiChart && oiChart && oiSeries) oiChart.setCrosshairPosition(0, param.time, oiSeries);
+                    if (sourceChart !== priceChart && priceChart && candlestickSeries) priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
+                    if (sourceChart !== rsiChart && rsiChart && rsiSeries && isChartVisible(rsiChart)) rsiChart.setCrosshairPosition(0, param.time, rsiSeries);
+                    if (sourceChart !== atrChart && atrChart && atrSeries && isChartVisible(atrChart)) atrChart.setCrosshairPosition(0, param.time, atrSeries);
+                    isCrosshairActive = true;
+                    if (sourceChart === priceChart || sourceChart === oiChart) {
+                        updateLegendValues(param);
                     }
-                });
-                isCrosshairActive = false;
-                clearLegendValues();
+                } else {
+                    allCharts.forEach(c => {
+                        if (c !== sourceChart && isChartVisible(c)) {
+                            try { c.clearCrosshairPosition(); } catch(e) {}
+                        }
+                    });
+                    isCrosshairActive = false;
+                    clearLegendValues();
+                }
+            } finally {
+                isSyncing = false;
             }
-            isSyncing = false;
         };
     }
 
@@ -1747,17 +1775,28 @@ async function loadOIHistory(symbol) {
         
         // Sync the visible logical range after a tiny delay to allow the layout to calculate
         setTimeout(() => {
-            if (priceChart) {
-                const range = priceChart.timeScale().getVisibleLogicalRange();
-                if (range) {
-                    if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
-                    if (rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
-                    if (atrChart) atrChart.timeScale().setVisibleLogicalRange(range);
+            try {
+                if (priceChart) {
+                    const range = priceChart.timeScale().getVisibleLogicalRange();
+                    if (range) {
+                        if (oiChart && isChartVisible(oiChart)) {
+                            try { oiChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing OI range in loadOIHistory:", e); }
+                        }
+                        if (rsiChart && isChartVisible(rsiChart)) {
+                            try { rsiChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing RSI range in loadOIHistory:", e); }
+                        }
+                        if (atrChart && isChartVisible(atrChart)) {
+                            try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing ATR range in loadOIHistory:", e); }
+                        }
+                    }
                 }
+            } catch (err) {
+                console.error("Error in loadOIHistory range sync callback:", err);
+            } finally {
+                setTimeout(() => {
+                    isSyncingSuspended = false;
+                }, 150);
             }
-            setTimeout(() => {
-                isSyncingSuspended = false;
-            }, 150);
         }, 100);
         
         clearLegendValues();
