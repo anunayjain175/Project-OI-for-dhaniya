@@ -875,6 +875,47 @@ function setupEventListeners() {
             }
         });
     }
+
+    // Details panel collapse/expand handler
+    const collapseBtn = document.getElementById('details-collapse-btn');
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', () => {
+            const detailsSection = document.querySelector('.details-section');
+            if (detailsSection) {
+                detailsSection.classList.toggle('collapsed');
+                
+                // Trigger chart resizing manually to ensure synchronization is instant and clean
+                setTimeout(() => {
+                    if (priceChart) {
+                        const container = document.getElementById('price-chart');
+                        priceChart.resize(container.clientWidth, container.clientHeight);
+                    }
+                    if (oiChart) {
+                        const container = document.getElementById('oi-chart');
+                        oiChart.resize(container.clientWidth, container.clientHeight);
+                    }
+                    if (rsiChart && toggleRsi && toggleRsi.checked) {
+                        const container = document.getElementById('rsi-chart');
+                        rsiChart.resize(container.clientWidth, container.clientHeight);
+                    }
+                    if (atrChart && toggleAtr && toggleAtr.checked) {
+                        const container = document.getElementById('atr-chart');
+                        atrChart.resize(container.clientWidth, container.clientHeight);
+                    }
+                    
+                    // Re-sync logical range to maintain alignment
+                    if (priceChart) {
+                        const range = priceChart.timeScale().getVisibleLogicalRange();
+                        if (range) {
+                            if (oiChart) oiChart.timeScale().setVisibleLogicalRange(range);
+                            if (rsiChart && toggleRsi && toggleRsi.checked) rsiChart.timeScale().setVisibleLogicalRange(range);
+                            if (atrChart && toggleAtr && toggleAtr.checked) atrChart.timeScale().setVisibleLogicalRange(range);
+                        }
+                    }
+                }, 50);
+            }
+        });
+    }
 }
 
 
@@ -1132,14 +1173,19 @@ function setupChartSynchronization() {
     // Helper to sync range from one chart to all others
     function syncRangeFrom(sourceChart) {
         return (range) => {
-            if (isSyncingSuspended || isSyncing || !range) return;
-            isSyncing = true;
+            if (isSyncingSuspended || !range) return;
             allCharts.forEach(c => {
                 if (c !== sourceChart && isChartVisible(c)) {
-                    try { c.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                    try {
+                        const currentRange = c.timeScale().getVisibleLogicalRange();
+                        if (!currentRange || 
+                            currentRange.from !== range.from || 
+                            currentRange.to !== range.to) {
+                            c.timeScale().setVisibleLogicalRange(range);
+                        }
+                    } catch(e) {}
                 }
             });
-            isSyncing = false;
         };
     }
 
