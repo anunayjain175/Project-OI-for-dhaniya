@@ -749,29 +749,61 @@ def get_futures_data(symbol: str = None):
                 res_data = m_data.copy()
                 res_data["market_open_oi"] = market_open_oi
             else:
-                hist = connector.mock_history.get(token, [])
-                if not hist:
-                    connector.get_historical_candles(symbol)
-                    hist = connector.mock_history.get(token, [])
-                if hist:
-                    last = hist[-1]
-                    yest_close = connector.baselines.get(token, {}).get("yesterday_close", last["close"])
-                    res_data = {
-                        "symbol": symbol,
-                        "token": token,
-                        "price": last["close"],
-                        "oi": last["oi"],
-                        "volume": last["volume"],
-                        "market_open_oi": market_open_oi,
-                        "ohlc": {
-                            "open": last["open"],
-                            "high": last["high"],
-                            "low": last["low"],
-                            "close": last["close"],
-                            "yesterday_close": yest_close
+                # DB / Unified History fallback (prevents mock 12000.0 glitch in live mode)
+                try:
+                    from backend.database import get_db_connection, get_cursor, get_placeholder
+                    conn = get_db_connection()
+                    cursor = get_cursor(conn)
+                    p = get_placeholder()
+                    query = f"SELECT open, high, low, close, open_interest, volume FROM ticks WHERE symbol = {p} ORDER BY timestamp DESC LIMIT 1"
+                    cursor.execute(query, (symbol,))
+                    row = cursor.fetchone()
+                    cursor.close()
+                    conn.close()
+                    if row:
+                        res_data = {
+                            "symbol": symbol,
+                            "token": token,
+                            "price": row["close"],
+                            "oi": row["open_interest"],
+                            "volume": row["volume"],
+                            "market_open_oi": market_open_oi,
+                            "ohlc": {
+                                "open": row["open"],
+                                "high": row["high"],
+                                "low": row["low"],
+                                "close": row["close"],
+                                "yesterday_close": row["open"]
+                            }
                         }
-                    }
-                else:
+                except Exception as e:
+                    print(f"Error fetching DB tick fallback in futures-data: {e}")
+
+                if not res_data:
+                    # Final fallback from unified history
+                    try:
+                        history = get_unified_history(symbol, connector)
+                        if history:
+                            last = history[-1]
+                            res_data = {
+                                "symbol": symbol,
+                                "token": token,
+                                "price": last["close"],
+                                "oi": last["oi"],
+                                "volume": last["volume"],
+                                "market_open_oi": market_open_oi,
+                                "ohlc": {
+                                    "open": last["open"],
+                                    "high": last["high"],
+                                    "low": last["low"],
+                                    "close": last["close"],
+                                    "yesterday_close": last["open"]
+                                }
+                            }
+                    except Exception as e:
+                        print(f"Error fetching unified history fallback in futures-data: {e}")
+
+                if not res_data:
                     res_data = {
                         "symbol": symbol,
                         "token": token,
@@ -782,6 +814,7 @@ def get_futures_data(symbol: str = None):
     if res_data:
         res_data["broker_connected"] = connector.connected if connector else False
     return make_nocache_response(res_data)
+
 
 @app.get("/api/historical-candles")
 def get_historical_candles(symbol: str):

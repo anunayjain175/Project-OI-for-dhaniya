@@ -271,7 +271,13 @@ class AngelConnector:
             if token in self.baselines:
                 info = self.baselines[token]
             else:
-                info = {"price": 12000.0, "open": 12000.0, "high": 12000.0, "low": 12000.0, "yesterday_close": 12000.0, "volume": 100, "oi": 1000}
+                fallback_p = 12000.0
+                if "GOLD" in symbol.upper():
+                    fallback_p = 154000.0
+                elif "SILVER" in symbol.upper():
+                    fallback_p = 85000.0
+                info = {"price": fallback_p, "open": fallback_p, "high": fallback_p, "low": fallback_p, "yesterday_close": fallback_p, "volume": 100, "oi": 1000}
+
             self._generate_single_mock_history(token, info)
             
         return self.mock_history.get(token, [])
