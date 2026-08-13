@@ -77,12 +77,27 @@ function isMarketHours(epochSeconds) {
     if (day === 0 || day === 6) {
         return false;
     }
+    
+    // Check if the current selected contract is MCX (Gold / Silver)
+    const isMcx = typeof currentSymbol === 'string' && (currentSymbol.toUpperCase().includes("GOLD") || currentSymbol.toUpperCase().includes("SILVER"));
+    
     const hours = date.getUTCHours();
-    if (hours < 10 || hours >= 17) {
-        return false;
+    const minutes = date.getUTCMinutes();
+    
+    if (isMcx) {
+        // MCX hours: 09:00 AM to 11:30 PM IST (inclusive of 23:30 closing minute)
+        if (hours < 9 || hours > 23 || (hours === 23 && minutes > 30)) {
+            return false;
+        }
+    } else {
+        // NCDEX hours: 10:00 AM to 05:00 PM IST (inclusive of 17:00 closing minute)
+        if (hours < 10 || hours > 17 || (hours === 17 && minutes > 0)) {
+            return false;
+        }
     }
     return true;
 }
+
 
 // Check if two epoch seconds represent the same day in IST
 function isSameDayIST(epochSeconds1, epochSeconds2) {
