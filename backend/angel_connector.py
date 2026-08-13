@@ -418,7 +418,10 @@ class AngelConnector:
             return self.market_data.get(token)
         
         setattr(self, cache_key, now)  # Claim the slot before any network call
-        item = self.fetch_market_quote("NCDEX", token)
+        seg = self.settings.get("futures_symbols", {}).get(symbol, {}).get("segment", "7")
+        exch = "MCX" if seg == "5" else "NCDEX"
+        item = self.fetch_market_quote(exch, token)
+
         if item:
             ltp = item.get("ltp", 0.0)
             open_val = item.get("open", ltp)
@@ -964,7 +967,8 @@ def resolve_angel_token(symbol_name):
             scrip_master = json.load(f)
             
         for item in scrip_master:
-            if item.get("exch_seg") == "NCDEX" and item.get("name") == commodity and item.get("instrumenttype") == "FUTCOM":
+            if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("name") == commodity and item.get("instrumenttype") in ("FUTCOM", "FUTBLN"):
+
                 sym = item.get("symbol", "")
                 if sym.endswith(target_match_suffix1) or target_match_suffix1 in sym or sym.endswith(target_match_suffix2) or target_match_suffix2 in sym:
                     print(f"AngelConnector: Resolved {symbol_name} -> token {item.get('token')} ({sym})")

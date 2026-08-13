@@ -371,9 +371,14 @@ def get_unified_history(symbol: str, connector):
     # If the current time is before 10:00 AM IST, the current session is the previous trading day.
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
+    is_mcx = "GOLD" in symbol.upper() or "SILVER" in symbol.upper()
+    open_hour = 9 if is_mcx else 10
+    close_hour = 23 if is_mcx else 17
+    close_minute = 30 if is_mcx else 0
+
     
     # Determine target_date: the most recent valid trading day
-    if now_ist.hour < 10:
+    if now_ist.hour < open_hour:
         # Market not open yet today, start from yesterday
         target_date = now_ist - timedelta(days=1)
     else:
@@ -385,8 +390,9 @@ def get_unified_history(symbol: str, connector):
             break
         target_date = target_date - timedelta(days=1)
         
-    market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
+    market_open = target_date.replace(hour=open_hour, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
+
     
     # Keep only the last 10 days of ticks (faster query and transfer)
     ten_days_ago = market_open_epoch - 10 * 24 * 3600
@@ -505,7 +511,7 @@ def get_unified_history(symbol: str, connector):
     end_prefill = session_ticks[0]["time"] if session_ticks else current_epoch
     
     # Limit prefill to the market close of target date or current epoch
-    market_close = target_date.replace(hour=17, minute=0, second=0, microsecond=0)
+    market_close = target_date.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0)
     market_close_epoch = int(market_close.timestamp())
     end_prefill = min(end_prefill, market_close_epoch, current_epoch)
     
@@ -520,11 +526,19 @@ def get_unified_history(symbol: str, connector):
     try:
         high_price = baseline.get("high") or max(start_price, target_price)
         low_price = baseline.get("low") or min(start_price, target_price)
+        
+        # Ensure non-zero price range for prefill candle generation
+        if high_price <= low_price:
+            variation = max(1.0, start_price * 0.003)
+            high_price = max(start_price, target_price) + variation
+            low_price = max(1.0, min(start_price, target_price) - variation)
+            
         # Avoid extreme high/low logic errors
         if high_price < max(start_price, target_price):
             high_price = max(start_price, target_price)
         if low_price > min(start_price, target_price):
             low_price = min(start_price, target_price)
+
             
         simulated = generate_illiquid_prefill(
             start_price=start_price,
@@ -610,9 +624,11 @@ def get_market_open_oi(symbol: str, connector):
     from backend.database import is_ncdex_holiday
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
+    is_mcx = "GOLD" in symbol.upper() or "SILVER" in symbol.upper()
+    open_hour = 9 if is_mcx else 10
     
     # Determine target_date: the most recent valid trading day
-    if now_ist.hour < 10:
+    if now_ist.hour < open_hour:
         target_date = now_ist - timedelta(days=1)
     else:
         target_date = now_ist
@@ -623,7 +639,8 @@ def get_market_open_oi(symbol: str, connector):
             break
         target_date = target_date - timedelta(days=1)
         
-    market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
+    market_open = target_date.replace(hour=open_hour, minute=0, second=0, microsecond=0)
+
     market_open_epoch = int(market_open.timestamp())
     today_str = target_date.strftime("%Y-%m-%d")
     cache_key = f"{symbol}_{today_str}"

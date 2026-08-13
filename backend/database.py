@@ -148,10 +148,11 @@ def is_ncdex_holiday(dt_or_epoch) -> bool:
         dt = dt_or_epoch
     return (dt.month, dt.day) in NCDEX_HOLIDAYS_2026
 
-def is_market_hours(epoch: int) -> bool:
+def is_market_hours(epoch: int, is_mcx: bool = False) -> bool:
     """
-    Returns True if the epoch timestamp (in IST) is within NCDEX market hours:
-    Monday to Friday (excluding holidays), 10:00 AM to 5:00 PM IST.
+    Returns True if the epoch timestamp (in IST) is within market hours:
+    NCDEX: Mon-Fri 10:00 AM to 5:00 PM IST.
+    MCX: Mon-Fri 9:00 AM to 11:30 PM IST.
     """
     from datetime import datetime, timezone, timedelta, time
     IST = timezone(timedelta(hours=5, minutes=30))
@@ -166,10 +167,15 @@ def is_market_hours(epoch: int) -> bool:
         return False
         
     t = dt.time()
-    start_time = time(10, 0, 0)
-    end_time = time(17, 0, 0) # Strictly before 5:00 PM IST
+    if is_mcx:
+        start_time = time(9, 0, 0)
+        end_time = time(23, 30, 0)
+    else:
+        start_time = time(10, 0, 0)
+        end_time = time(17, 0, 0) # Strictly before 5:00 PM IST
     
     return start_time <= t < end_time
+
 
 def get_last_market_minute(epoch: int) -> int:
     """
@@ -451,7 +457,8 @@ _worker_thread.start()
 
 def save_tick(symbol: str, token: str, price: float, open_interest: int, volume: int, cvd: float = None):
     now = int(time.time())
-    if is_market_hours(now):
+    is_mcx = "GOLD" in symbol.upper() or "SILVER" in symbol.upper()
+    if is_market_hours(now, is_mcx=is_mcx):
         if cvd is None:
             cvd = get_or_calculate_cvd(token, price, volume, now)
         db_write_queue.put((symbol, token, price, open_interest, volume, cvd, now))
@@ -465,9 +472,9 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
 def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = None):
     conn = get_db_connection()
     cursor = get_cursor(conn)
+    p = get_placeholder()
     
     interval_seconds = interval_minutes * 60
-    p = get_placeholder()
     
     if start_timestamp is not None:
         query = f"""
@@ -501,6 +508,7 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
             ORDER BY timestamp ASC
         """
         cursor.execute(query, (interval_seconds, interval_seconds, symbol))
+
     rows = cursor.fetchall()
     
     cursor.close()
@@ -509,7 +517,9 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
     if not rows:
         return []
         
-    rows = [r for r in rows if is_market_hours(r["interval_time"])]
+    is_mcx = "GOLD" in symbol.upper() or "SILVER" in symbol.upper()
+    rows = [r for r in rows if is_market_hours(r["interval_time"], is_mcx=is_mcx)]
+
     if not rows:
         return []
         
