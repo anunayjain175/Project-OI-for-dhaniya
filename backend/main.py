@@ -63,7 +63,7 @@ market_open_oi_cache = {}
 # In-memory result cache for get_unified_history: {symbol: (timestamp, data)}
 # TTL = 60 seconds (one candle period). Invalidated on each new live tick.
 _unified_history_cache: dict = {}
-_UNIFIED_HISTORY_TTL = 60  # seconds
+_UNIFIED_HISTORY_TTL = 2  # seconds (keep fresh to reflect instant database updates)
 
 def invalidate_history_cache(symbol: str | None = None):
     """Call this whenever a new tick arrives to flush the cache for that symbol."""
@@ -122,6 +122,7 @@ def startup_event():
     main_loop.create_task(periodic_prune_task())
     
     connector = AngelConnector(config_callback=broadcast_tick)
+    connector.auto_discover_contracts()  # Auto-discover new NCDEX contracts from scrip master
     connector.start(broadcast_tick)
     print("FastAPI: Started AngelConnector listener")
 
@@ -152,6 +153,8 @@ COMMODITY_NAMES = {
     "COTTON": "Cotton",
     "COTWASOIL": "Cotton Seed Oil",
     "DHANIYA": "Coriander (Dhaniya)",
+    "GOLD": "Gold",
+    "GOLDM": "Gold Mini",
     "GROUNDNUT": "Groundnut",
     "GUARGUM5": "Guar Gum",
     "GUARSEED10": "Guar Seed",
@@ -161,18 +164,52 @@ COMMODITY_NAMES = {
     "KAPAS": "Kapas",
     "MAIZE": "Maize",
     "SESAMESEED": "Sesame Seed",
+    "SILVER": "Silver",
+    "SILVERM": "Silver Mini",
     "STEEL": "Steel",
     "SUNOIL": "Sunflower Oil",
     "TMCFGRNZM": "Turmeric (Haldi)",
     "YELLOWP": "Yellow Peas"
 }
 
+def _parse_expiry_from_token(token: str):
+    """Parse expiry date from an Angel One token.
+    Handles both NCDEX format ('DHANIYA20AUG2026') and MCX format ('GOLD05OCT26FUT').
+    Returns None if parsing fails."""
+    import re
+    token_upper = token.upper()
+    # Try NCDEX format first: {CODE}{DD}{MON}{YYYY}
+    m = re.search(r'(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{4})$', token_upper)
+    if not m:
+        # Try MCX format: {CODE}{DD}{MON}{YY}FUT
+        m = re.search(r'(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})FUT$', token_upper)
+    if not m:
+        return None
+    try:
+        day, mon, year_str = int(m.group(1)), m.group(2), m.group(3)
+        year = int(year_str)
+        if year < 100:
+            year += 2000  # Convert 2-digit year: 26 -> 2026
+        month_map = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+                      "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
+        return datetime(year, month_map[mon], day).date()
+    except (ValueError, KeyError):
+        return None
+
 @app.get("/api/ncdex-contracts")
-def get_ncdex_contracts():
-    """Returns all NCDEX contracts grouped by commodity for the frontend dropdown."""
+def get_ncdex_contracts(include_expired: bool = False):
+    """Returns all NCDEX contracts grouped by commodity for the frontend dropdown.
+    Expired contracts are filtered out by default. Pass ?include_expired=true to include them."""
     futures = connector.settings.get("futures_symbols", {})
+    today = datetime.now().date()
     groups = {}
     for display_name, info in futures.items():
+        # Filter expired contracts unless explicitly requested
+        if not include_expired:
+            token = info.get("token", "")
+            expiry = _parse_expiry_from_token(token)
+            if expiry and expiry < today:
+                continue
         parts = display_name.split()
         code = parts[0]
         commodity = COMMODITY_NAMES.get(code, code)
@@ -325,37 +362,37 @@ def get_unified_history(symbol: str, connector):
         if time.time() - cache_ts < _UNIFIED_HISTORY_TTL:
             return cache_data
 
-    from backend.database import get_history
+    from backend.database import get_history, is_ncdex_holiday
     import random
     from datetime import datetime, timezone, timedelta
     
     # 1. Get market open timestamp in IST
-    # NCDEX session is Monday to Friday, starts at 10:00 AM IST.
+    # NCDEX session is Monday to Friday (excluding holidays), starts at 10:00 AM IST.
     # If the current time is before 10:00 AM IST, the current session is the previous trading day.
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     
-    if now_ist.weekday() == 5: # Saturday
+    # Determine target_date: the most recent valid trading day
+    if now_ist.hour < 10:
+        # Market not open yet today, start from yesterday
         target_date = now_ist - timedelta(days=1)
-    elif now_ist.weekday() == 6: # Sunday
-        target_date = now_ist - timedelta(days=2)
-    elif now_ist.hour < 10:
-        # Market not open yet today. Use previous trading day (Friday if Monday)
-        if now_ist.weekday() == 0: # Monday
-            target_date = now_ist - timedelta(days=3)
-        else:
-            target_date = now_ist - timedelta(days=1)
     else:
         target_date = now_ist
+    
+    # Rewind past weekends and holidays to find the actual last trading day
+    for _ in range(10):  # Max 10 days back
+        if target_date.weekday() <= 4 and not is_ncdex_holiday(target_date):
+            break
+        target_date = target_date - timedelta(days=1)
         
     market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
     
-    # Keep only the last 30 days of ticks
-    thirty_days_ago = market_open_epoch - 30 * 24 * 3600
+    # Keep only the last 10 days of ticks (faster query and transfer)
+    ten_days_ago = market_open_epoch - 10 * 24 * 3600
     
-    # 2. Fetch real history from DB (filtered to 30 days)
-    real_ticks = get_history(symbol, start_timestamp=thirty_days_ago) # sorted by time ASC
+    # 2. Fetch real history from DB (filtered to 10 days)
+    real_ticks = get_history(symbol, start_timestamp=ten_days_ago) # sorted by time ASC
     
     # Filter real ticks into today's session and past sessions
     session_ticks = [t for t in real_ticks if t["time"] >= market_open_epoch]
@@ -460,6 +497,8 @@ def get_unified_history(symbol: str, connector):
         target_vol = baseline.get("volume") or 100
         start_oi = int(user_open_oi) if user_open_oi is not None else target_oi
         
+    start_cvd = 0.0
+
     # 4. Generate pre-fill ticks
     # We want to fill from market_open_epoch up to the first session tick, or the current time/market close if no ticks exist.
     current_epoch = int(time.time())
@@ -506,7 +545,9 @@ def get_unified_history(symbol: str, connector):
                 "low": sc["low"],
                 "close": sc["close"],
                 "oi": sc["oi"],
-                "volume": sc["volume"]
+                "volume": sc["volume"],
+                "cvd": start_cvd,
+                "prefill": True
             })
     except Exception as sim_err:
         print(f"Error running illiquid prefill simulation: {sim_err}")
@@ -540,7 +581,9 @@ def get_unified_history(symbol: str, connector):
                 "low": round(min(price, price_next) - abs(rng.normalvariate(0, price * 0.0001)), 2),
                 "close": round(price_next, 2),
                 "oi": int(oi_next),
-                "volume": int(vol_next)
+                "volume": int(vol_next),
+                "cvd": start_cvd,
+                "prefill": True
             })
             price = price_next
             oi = oi_next
@@ -564,20 +607,21 @@ def get_market_open_oi(symbol: str, connector):
 
     # Cache market open OI daily per symbol to avoid heavy DB/pre-fill queries on every live tick
     from datetime import datetime, timezone, timedelta
+    from backend.database import is_ncdex_holiday
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     
-    if now_ist.weekday() == 5: # Saturday
+    # Determine target_date: the most recent valid trading day
+    if now_ist.hour < 10:
         target_date = now_ist - timedelta(days=1)
-    elif now_ist.weekday() == 6: # Sunday
-        target_date = now_ist - timedelta(days=2)
-    elif now_ist.hour < 10:
-        if now_ist.weekday() == 0: # Monday
-            target_date = now_ist - timedelta(days=3)
-        else:
-            target_date = now_ist - timedelta(days=1)
     else:
         target_date = now_ist
+    
+    # Rewind past weekends and holidays
+    for _ in range(10):
+        if target_date.weekday() <= 4 and not is_ncdex_holiday(target_date):
+            break
+        target_date = target_date - timedelta(days=1)
         
     market_open = target_date.replace(hour=10, minute=0, second=0, microsecond=0)
     market_open_epoch = int(market_open.timestamp())
@@ -741,11 +785,20 @@ def get_historical_oi(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_curve_history_cache: dict = {}
+_CURVE_HISTORY_TTL = 30  # seconds
+
 def get_commodity_curve_history(commodity_prefix: str, connector):
     import time
+    cached = _curve_history_cache.get(commodity_prefix)
+    if cached:
+        cache_ts, cache_data = cached
+        if time.time() - cache_ts < _CURVE_HISTORY_TTL:
+            return cache_data
+
     import random
     from datetime import datetime, timezone, timedelta
-    from backend.database import get_db_connection, get_cursor, get_placeholder
+    from backend.database import get_db_connection, get_cursor, get_placeholder, is_ncdex_holiday
     
     # 1. Find all configured symbols for this commodity
     all_symbols = connector.settings.get("futures_symbols", {})
@@ -772,17 +825,27 @@ def get_commodity_curve_history(commodity_prefix: str, connector):
         return (99, 12)
         
     matching_symbols.sort(key=parse_expiry)
-    # Get top 3 contracts
-    target_items = matching_symbols[:3]
+    
+    # Filter out expired contracts (same logic as dropdown)
+    today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date()
+    active_symbols = []
+    for item in matching_symbols:
+        token_str = item[1].get("token", "")
+        expiry_date = _parse_expiry_from_token(token_str)
+        if expiry_date is None or expiry_date >= today:
+            active_symbols.append(item)
+    
+    # Get top 3 active contracts
+    target_items = active_symbols[:3]
     target_symbols = [item[0] for item in target_items]
     
-    # 2. Get the last 6 weekdays in IST (so we can calculate change for the latest 5 weekdays)
+    # 2. Get the last 6 trading days in IST (skip weekends AND holidays)
     IST = timezone(timedelta(hours=5, minutes=30))
     weekdays = []
     temp_date = datetime.now(IST)
     
     while len(weekdays) < 6:
-        if temp_date.weekday() < 5: # 0-4 are Mon-Fri
+        if temp_date.weekday() < 5 and not is_ncdex_holiday(temp_date):
             weekdays.append(temp_date.strftime("%Y-%m-%d"))
         temp_date -= timedelta(days=1)
         
@@ -880,20 +943,39 @@ def get_commodity_curve_history(commodity_prefix: str, connector):
             prev_day_data = data_by_symbol[sym][prev_day]
             
             price_change = day_data["close"] - prev_day_data["close"]
+            oi_change = day_data["oi"] - prev_day_data["oi"]
+            
+            # Fetch official yesterday_close for today's row to align with broker
+            yest_close = None
+            if day == weekdays[-1]:
+                token = all_symbols.get(sym, {}).get("token")
+                if token:
+                    m_data = connector.market_data.get(token) if connector else None
+                    if m_data and "ohlc" in m_data:
+                        yest_close = m_data["ohlc"].get("yesterday_close")
+                    if not yest_close and connector and connector.settings.get("mode") == "mock" and token in connector.baselines:
+                        yest_close = connector.baselines[token].get("yesterday_close")
+                
+                if yest_close:
+                    price_change = day_data["close"] - yest_close
             
             day_info["contracts"][sym] = {
                 "close": day_data["close"],
                 "change": round(price_change, 2),
-                "oi": day_data["oi"]
+                "oi": day_data["oi"],
+                "oi_change": int(oi_change),
+                "yesterday_close": yest_close
             }
             day_info["total_oi"] += day_data["oi"]
         result.append(day_info)
         
-    return {
+    res_payload = {
         "commodity": commodity_prefix,
         "contracts": target_symbols,
         "history": result
     }
+    _curve_history_cache[commodity_prefix] = (time.time(), res_payload)
+    return res_payload
 
 
 @app.get("/api/commodity-history")
@@ -1066,6 +1148,14 @@ async def websocket_endpoint(websocket: WebSocket):
 # Serve Frontend static assets
 os.makedirs("frontend", exist_ok=True)
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+@app.get("/sw.js")
+def get_service_worker():
+    """Serve the service worker from root scope (required for PWA)."""
+    response = FileResponse("frontend/sw.js", media_type="application/javascript")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
 
 @app.get("/")
 def get_index():

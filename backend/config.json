@@ -1,7 +1,7 @@
 {
   "mode": "live",
-  "active_symbol": "DHANIYA JUN 26",
-  "active_token": "DHANIYA19JUN2026",
+  "active_symbol": "DHANIYA AUG 26",
+  "active_token": "DHANIYA20AUG2026",
   "active_segment": "7",
   "eod_override": {},
   "angel_client_id": "P52170454",
@@ -17,7 +17,7 @@
     "DHANIYA AUG 26": {
       "token": "DHANIYA20AUG2026",
       "segment": "7",
-      "tv_symbol": "NCDEX:DHANIYAN2026"
+      "tv_symbol": "NCDEX:DHANIYAQ2026"
     },
     "DHANIYA OCT 26": {
       "token": "DHANIYA19OCT2026",
@@ -133,6 +133,101 @@
       "token": "TMCFGRNZM18DEC2026",
       "segment": "7",
       "tv_symbol": "NCDEX:TMCFGRNZM1!"
+    },
+    "GOLD OCT 26": {
+      "token": "GOLD05OCT26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLD1!"
+    },
+    "GOLD DEC 26": {
+      "token": "GOLD04DEC26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLD1!"
+    },
+    "GOLD FEB 27": {
+      "token": "GOLD05FEB27FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLD1!"
+    },
+    "GOLDM SEP 26": {
+      "token": "GOLDM04SEP26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLDM1!"
+    },
+    "GOLDM OCT 26": {
+      "token": "GOLDM05OCT26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLDM1!"
+    },
+    "GOLDM NOV 26": {
+      "token": "GOLDM05NOV26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:GOLDM1!"
+    },
+    "SILVER SEP 26": {
+      "token": "SILVER04SEP26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVER1!"
+    },
+    "SILVER DEC 26": {
+      "token": "SILVER04DEC26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVER1!"
+    },
+    "SILVER MAR 27": {
+      "token": "SILVER05MAR27FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVER1!"
+    },
+    "SILVERM AUG 26": {
+      "token": "SILVERM31AUG26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVERM1!"
+    },
+    "SILVERM NOV 26": {
+      "token": "SILVERM30NOV26FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVERM1!"
+    },
+    "SILVERM FEB 27": {
+      "token": "SILVERM26FEB27FUT",
+      "segment": "5",
+      "tv_symbol": "MCX:SILVERM1!"
+    },
+    "GUARGUM5 JAN 27": {
+      "token": "GUARGUM520JAN2027",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
+    },
+    "JEERAMINI NOV 26": {
+      "token": "JEERAMINI20NOV2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "JEERAMINI DEC 26": {
+      "token": "JEERAMINI18DEC2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAMINI1!"
+    },
+    "DHANIYA JAN 27": {
+      "token": "DHANIYA20JAN2027",
+      "segment": "7",
+      "tv_symbol": "NCDEX:DHANIYAF2027"
+    },
+    "JEERAUNJHA DEC 26": {
+      "token": "JEERAUNJHA18DEC2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "JEERAUNJHA NOV 26": {
+      "token": "JEERAUNJHA20NOV2026",
+      "segment": "7",
+      "tv_symbol": "NCDEX:JEERAUNJHA1!"
+    },
+    "GUARGUM5 FEB 27": {
+      "token": "GUARGUM519FEB2027",
+      "segment": "7",
+      "tv_symbol": "NCDEX:GUARGUM51!"
     }
   }
 }

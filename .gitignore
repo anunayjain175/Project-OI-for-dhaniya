@@ -43,3 +43,7 @@ Thumbs.db
 # Secrets and text configurations
 Neon and monitor.txt
 *.txt
+
+# Temporary debug scripts
+backend/_*.py
+

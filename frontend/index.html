@@ -2,14 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0B0F19">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NCDEX OI">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="description" content="Real-time Open Interest charting terminal for NCDEX commodity futures">
     <title>Anunay's NCDEX OI Terminal</title>
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon-512.png">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Main Stylesheet -->
-    <link rel="stylesheet" href="/static/app.css?v=12">
+    <link rel="stylesheet" href="/static/app.css?v=13">
     <!-- TradingView Standalone Charting Widget -->
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <!-- TradingView Lightweight Charts CDN (pinned to stable v4.1.1) -->
@@ -30,7 +39,16 @@
             <div class="controls-group">
                 <div class="control-item">
                     <label>Active Contract</label>
-                    <select id="symbol-select" class="styled-select">
+                    <div class="custom-dropdown" id="symbol-dropdown">
+                        <button type="button" class="custom-dropdown-btn" id="symbol-dropdown-btn">
+                            <span id="symbol-dropdown-text">Loading contracts...</span>
+                            <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+                        </button>
+                        <div class="custom-dropdown-menu" id="symbol-dropdown-menu">
+                            <!-- Populated via Javascript -->
+                        </div>
+                    </div>
+                    <select id="symbol-select" class="styled-select" style="display: none;">
                         <option value="">Loading contracts...</option>
                     </select>
                 </div>
@@ -129,6 +147,7 @@
                                 <div class="indicator-section-title" style="margin-top: 8px;">Oscillators</div>
                                 <label class="indicator-checkbox"><input type="checkbox" id="toggle-rsi"> RSI (14)</label>
                                 <label class="indicator-checkbox"><input type="checkbox" id="toggle-atr"> ATR (14)</label>
+                                <label class="indicator-checkbox"><input type="checkbox" id="toggle-cvd"> CVD</label>
                             </div>
                         </div>
                     </div>
@@ -151,6 +170,8 @@
                 <div id="rsi-chart" class="chart-pane-indicator" style="display: none;"></div>
                 <!-- ATR Chart Container -->
                 <div id="atr-chart" class="chart-pane-indicator" style="display: none;"></div>
+                <!-- CVD Chart Container -->
+                <div id="cvd-chart" class="chart-pane-indicator" style="display: none;"></div>
             </div>
         </main>
 
@@ -165,7 +186,8 @@
                         <i class="fa-solid fa-graduation-cap"></i> OI Sentiment Guide
                     </button>
                 </div>
-                <button id="details-collapse-btn" class="collapse-btn" title="Collapse/Expand Panel">
+                <button id="details-collapse-btn" class="collapse-btn" title="Minimize / Expand Table Panel">
+                    <span id="collapse-btn-text">Minimize Panel</span>
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
             </div>
@@ -199,12 +221,12 @@
                                         <th rowspan="2" style="vertical-align: middle;">Total OI</th>
                                     </tr>
                                     <tr style="font-size: 10px;">
-                                        <th class="ce-super-header">Chg</th>
-                                        <th class="ce-super-header">OI</th>
-                                        <th class="pe-super-header">Chg</th>
-                                        <th class="pe-super-header">OI</th>
-                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-left: 1px solid var(--border-color);">Chg</th>
-                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-right: 1px solid var(--border-color);">OI</th>
+                                        <th class="ce-super-header">Price Chg</th>
+                                        <th class="ce-super-header">OI Chg</th>
+                                        <th class="pe-super-header">Price Chg</th>
+                                        <th class="pe-super-header">OI Chg</th>
+                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-left: 1px solid var(--border-color);">Price Chg</th>
+                                        <th style="background-color: rgba(255, 255, 255, 0.03); border-right: 1px solid var(--border-color);">OI Chg</th>
                                     </tr>
                                 </thead>
                                 <tbody id="stats-history-tbody">
@@ -435,7 +457,16 @@
     </div>
 
     <!-- Main Javascript -->
-    <script src="/static/app.js?v=39"></script>
+    <script src="/static/app.js?v=42"></script>
+    <!-- PWA Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('SW registered:', reg.scope))
+                    .catch(err => console.warn('SW registration failed:', err));
+            });
+        }
+    </script>
 </body>
 </html>
-

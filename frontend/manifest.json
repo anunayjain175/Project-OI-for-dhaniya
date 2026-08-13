@@ -1,0 +1,19 @@
+{
+    "name": "Anunay's NCDEX OI Terminal",
+    "short_name": "NCDEX OI",
+    "description": "Real-time Open Interest charting terminal for NCDEX commodity futures",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#0B0F19",
+    "theme_color": "#0B0F19",
+    "icons": [
+        {
+            "src": "/static/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": ["finance", "business"]
+}

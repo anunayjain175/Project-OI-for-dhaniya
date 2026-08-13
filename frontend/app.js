@@ -220,6 +220,7 @@ function calcATR(data, period = 14) {
 
 // Global State
 let socket = null;
+let isInitialWsConnect = true;
 let currentSymbol = "JEERA-FUT";
 let config = {};
 
@@ -237,6 +238,7 @@ let priceChart = null;
 let oiChart = null;
 let rsiChart = null;
 let atrChart = null;
+let cvdChart = null;
 
 // Chart Series
 let candlestickSeries = null;
@@ -244,6 +246,7 @@ let volumeSeries = null;
 let oiSeries = null;
 let rsiSeries = null;
 let atrSeries = null;
+let cvdSeries = null;
 let rsiOverboughtLine = null;
 let rsiOversoldLine = null;
 let rsiMiddleLine = null;
@@ -280,6 +283,12 @@ let activeMinuteLow = null;
 let activeMinuteClose = null;
 let activeMinuteVolumeStart = null;
 let activeMinuteVolume = 0;
+
+// Active CVD candlestick state
+let activeCvdOpen = null;
+let activeCvdHigh = null;
+let activeCvdLow = null;
+let activeCvdClose = null;
 
 // DOM Elements (declared globally, assigned after DOM loads)
 let symbolSelect;
@@ -385,6 +394,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     initOIChart();
     initRSIChart();
     initATRChart();
+    initCVDChart();
     setupChartSynchronization();
     
     // 3. Setup Events
@@ -417,6 +427,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 // Event Listeners
 function setupEventListeners() {
+    // Custom Symbol Dropdown Toggle
+    const customDropdownBtn = document.getElementById("symbol-dropdown-btn");
+    const customDropdown = document.getElementById("symbol-dropdown");
+    if (customDropdownBtn && customDropdown) {
+        customDropdownBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            customDropdown.classList.toggle("open");
+        });
+        document.addEventListener("click", (e) => {
+            if (!customDropdown.contains(e.target)) {
+                customDropdown.classList.remove("open");
+            }
+        });
+    }
+
     // Symbol Select Trigger
     symbolSelect.addEventListener("change", async (e) => {
         currentSymbol = e.target.value;
@@ -457,9 +482,11 @@ function setupEventListeners() {
         if (rsiMiddleLine) rsiMiddleLine.setData([]);
         if (atrSeries) atrSeries.setData([]);
         
-        await loadOIHistory(currentSymbol);
-        await loadCommodityCurveHistory(currentSymbol);
-        await fetchStatsData();
+        await Promise.all([
+            loadOIHistory(currentSymbol),
+            loadCommodityCurveHistory(currentSymbol),
+            fetchStatsData()
+        ]);
     });
 
     // Tab switcher
@@ -665,6 +692,7 @@ function setupEventListeners() {
                 initOIChart();
                 initRSIChart();
                 initATRChart();
+                initCVDChart();
                 setupChartSynchronization();
                 await loadOIHistory(currentSymbol);
                 await loadCommodityCurveHistory(currentSymbol);
@@ -765,6 +793,9 @@ function setupEventListeners() {
                             if (atrChart && isChartVisible(atrChart)) {
                                 try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing ATR range on timeframe change:", e); }
                             }
+                            if (cvdChart && isChartVisible(cvdChart)) {
+                                try { cvdChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing CVD range on timeframe change:", e); }
+                            }
                         }
                     }
                 } catch (err) {
@@ -864,6 +895,10 @@ function setupEventListeners() {
                     const container = document.getElementById('atr-chart');
                     if (container) atrChart.resize(container.clientWidth, container.clientHeight);
                 }
+                if (cvdChart && isChartVisible(cvdChart)) {
+                    const container = document.getElementById('cvd-chart');
+                    if (container) cvdChart.resize(container.clientWidth, container.clientHeight);
+                }
                 
                 // Re-sync logical range to maintain alignment
                 if (priceChart) {
@@ -877,6 +912,9 @@ function setupEventListeners() {
                         }
                         if (atrChart && isChartVisible(atrChart)) {
                             try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+                        }
+                        if (cvdChart && isChartVisible(cvdChart)) {
+                            try { cvdChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
                         }
                     }
                 }
@@ -910,13 +948,38 @@ function setupEventListeners() {
         });
     }
 
+    // CVD toggle
+    const toggleCvd = document.getElementById('toggle-cvd');
+    if (toggleCvd) {
+        toggleCvd.addEventListener('change', () => {
+            const cvdContainer = document.getElementById('cvd-chart');
+            if (cvdContainer) {
+                cvdContainer.style.display = toggleCvd.checked ? '' : 'none';
+                if (toggleCvd.checked) {
+                    const detailsSection = document.querySelector('.details-section');
+                    const btnText = document.getElementById('collapse-btn-text');
+                    if (detailsSection && !detailsSection.classList.contains('collapsed')) {
+                        detailsSection.classList.add('collapsed');
+                        if (btnText) btnText.innerText = "Expand Panel";
+                    }
+                    if (currentHistoryData && currentHistoryData.length > 0) {
+                        updateIndicators(currentHistoryData, false);
+                    }
+                }
+                resizeAndSyncAllCharts();
+            }
+        });
+    }
+
     // Details panel collapse/expand handler
     const collapseBtn = document.getElementById('details-collapse-btn');
     if (collapseBtn) {
         collapseBtn.addEventListener('click', () => {
             const detailsSection = document.querySelector('.details-section');
+            const btnText = document.getElementById('collapse-btn-text');
             if (detailsSection) {
-                detailsSection.classList.toggle('collapsed');
+                const isCollapsed = detailsSection.classList.toggle('collapsed');
+                if (btnText) btnText.innerText = isCollapsed ? "Expand Panel" : "Minimize Panel";
                 resizeAndSyncAllCharts();
             }
         });
@@ -991,6 +1054,76 @@ async function populateContractsDropdown() {
         if (!symbolSelect.value && symbolSelect.options.length > 0) {
             symbolSelect.selectedIndex = 0;
             currentSymbol = symbolSelect.value;
+        }
+
+        // Populate custom dropdown UI
+        const customDropdownMenu = document.getElementById("symbol-dropdown-menu");
+        const customDropdownText = document.getElementById("symbol-dropdown-text");
+        const customDropdown = document.getElementById("symbol-dropdown");
+
+        if (customDropdownMenu && customDropdownText && customDropdown) {
+            customDropdownMenu.innerHTML = "";
+            let hasSelected = false;
+
+            for (const commodity of sortedCommodities) {
+                // Add group title
+                const groupHeader = document.createElement("div");
+                groupHeader.className = "custom-dropdown-group-title";
+                groupHeader.textContent = commodity;
+                customDropdownMenu.appendChild(groupHeader);
+
+                for (const contract of groups[commodity]) {
+                    const item = document.createElement("div");
+                    item.className = "custom-dropdown-item";
+                    item.setAttribute("data-value", contract.label);
+
+                    const isSelected = contract.label === symbolSelect.value;
+                    if (isSelected) {
+                        item.classList.add("selected");
+                        customDropdownText.textContent = contract.label;
+                        hasSelected = true;
+                    }
+
+                    const nameSpan = document.createElement("span");
+                    nameSpan.textContent = contract.label;
+                    item.appendChild(nameSpan);
+
+                    const checkIcon = document.createElement("i");
+                    checkIcon.className = "fa-solid fa-check selected-indicator";
+                    item.appendChild(checkIcon);
+
+                    // Add click handler
+                    item.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        
+                        // Select inside hidden select
+                        symbolSelect.value = contract.label;
+                        
+                        // Update active contract display name
+                        customDropdownText.textContent = contract.label;
+                        
+                        // Update visual active classes
+                        customDropdownMenu.querySelectorAll(".custom-dropdown-item").forEach(el => {
+                            el.classList.remove("selected");
+                        });
+                        item.classList.add("selected");
+
+                        // Close dropdown menu
+                        customDropdown.classList.remove("open");
+
+                        // Dispatch change event to trigger active contract update pipeline
+                        const changeEvent = new Event("change");
+                        symbolSelect.dispatchEvent(changeEvent);
+                    });
+
+                    customDropdownMenu.appendChild(item);
+                }
+            }
+
+            // Fallback text if nothing matched
+            if (!hasSelected && symbolSelect.value) {
+                customDropdownText.textContent = symbolSelect.value;
+            }
         }
 
     } catch (err) {
@@ -1120,8 +1253,10 @@ let priceCrosshairMoveHandler = null;
 let oiCrosshairMoveHandler = null;
 let rsiLogicalRangeChangeHandler = null;
 let atrLogicalRangeChangeHandler = null;
+let cvdLogicalRangeChangeHandler = null;
 let rsiCrosshairMoveHandler = null;
 let atrCrosshairMoveHandler = null;
+let cvdCrosshairMoveHandler = null;
 
 // Helper to check chart container visibility to prevent syncing issues with hidden/0-size charts
 function isChartVisible(chart) {
@@ -1136,6 +1271,10 @@ function isChartVisible(chart) {
         const toggleAtr = document.getElementById('toggle-atr');
         return toggleAtr ? toggleAtr.checked : false;
     }
+    if (chart === cvdChart) {
+        const toggleCvd = document.getElementById('toggle-cvd');
+        return toggleCvd ? toggleCvd.checked : false;
+    }
     return false;
 }
 
@@ -1146,7 +1285,7 @@ function setupChartSynchronization() {
     }
 
     // All charts to sync
-    const allCharts = [priceChart, oiChart, rsiChart, atrChart].filter(c => c !== null);
+    const allCharts = [priceChart, oiChart, rsiChart, atrChart, cvdChart].filter(c => c !== null);
 
     // Unsubscribe previous handlers if they exist to prevent memory leaks and multiple triggers
     if (priceLogicalRangeChangeHandler) {
@@ -1161,6 +1300,9 @@ function setupChartSynchronization() {
     if (atrLogicalRangeChangeHandler && atrChart) {
         try { atrChart.timeScale().unsubscribeVisibleLogicalRangeChange(atrLogicalRangeChangeHandler); } catch(e) {}
     }
+    if (cvdLogicalRangeChangeHandler && cvdChart) {
+        try { cvdChart.timeScale().unsubscribeVisibleLogicalRangeChange(cvdLogicalRangeChangeHandler); } catch(e) {}
+    }
     if (priceCrosshairMoveHandler) {
         try { priceChart.unsubscribeCrosshairMove(priceCrosshairMoveHandler); } catch(e) {}
     }
@@ -1173,6 +1315,9 @@ function setupChartSynchronization() {
     if (atrCrosshairMoveHandler && atrChart) {
         try { atrChart.unsubscribeCrosshairMove(atrCrosshairMoveHandler); } catch(e) {}
     }
+    if (cvdCrosshairMoveHandler && cvdChart) {
+        try { cvdChart.unsubscribeCrosshairMove(cvdCrosshairMoveHandler); } catch(e) {}
+    }
 
     let isSyncing = false;
 
@@ -1182,11 +1327,11 @@ function setupChartSynchronization() {
             if (isSyncingSuspended || isSyncingRange || !range) return;
             isSyncingRange = true;
             try {
-                const chartName = sourceChart === priceChart ? "Price" : (sourceChart === oiChart ? "OI" : (sourceChart === rsiChart ? "RSI" : "ATR"));
+                const chartName = sourceChart === priceChart ? "Price" : (sourceChart === oiChart ? "OI" : (sourceChart === rsiChart ? "RSI" : (sourceChart === cvdChart ? "CVD" : "ATR")));
                 console.log(`syncRangeFrom: Triggered by ${chartName} chart with range: from=${range.from}, to=${range.to}`);
                 allCharts.forEach(c => {
                     if (c !== sourceChart) {
-                        const targetName = c === priceChart ? "Price" : (c === oiChart ? "OI" : (c === rsiChart ? "RSI" : "ATR"));
+                        const targetName = c === priceChart ? "Price" : (c === oiChart ? "OI" : (c === rsiChart ? "RSI" : (c === cvdChart ? "CVD" : "ATR")));
                         const visible = isChartVisible(c);
                         console.log(`syncRangeFrom: Target ${targetName} visible status: ${visible}`);
                         if (visible) {
@@ -1226,6 +1371,7 @@ function setupChartSynchronization() {
                     if (sourceChart !== priceChart && priceChart && candlestickSeries) priceChart.setCrosshairPosition(0, param.time, candlestickSeries);
                     if (sourceChart !== rsiChart && rsiChart && rsiSeries && isChartVisible(rsiChart)) rsiChart.setCrosshairPosition(0, param.time, rsiSeries);
                     if (sourceChart !== atrChart && atrChart && atrSeries && isChartVisible(atrChart)) atrChart.setCrosshairPosition(0, param.time, atrSeries);
+                    if (sourceChart !== cvdChart && cvdChart && cvdSeries && isChartVisible(cvdChart)) cvdChart.setCrosshairPosition(0, param.time, cvdSeries);
                     isCrosshairActive = true;
                     if (sourceChart === priceChart || sourceChart === oiChart) {
                         updateLegendValues(param);
@@ -1271,6 +1417,14 @@ function setupChartSynchronization() {
         atrCrosshairMoveHandler = syncCrosshairFrom(atrChart, atrSeries);
         atrChart.timeScale().subscribeVisibleLogicalRangeChange(atrLogicalRangeChangeHandler);
         atrChart.subscribeCrosshairMove(atrCrosshairMoveHandler);
+    }
+
+    // Subscribe CVD
+    if (cvdChart) {
+        cvdLogicalRangeChangeHandler = syncRangeFrom(cvdChart);
+        cvdCrosshairMoveHandler = syncCrosshairFrom(cvdChart, cvdSeries);
+        cvdChart.timeScale().subscribeVisibleLogicalRangeChange(cvdLogicalRangeChangeHandler);
+        cvdChart.subscribeCrosshairMove(cvdCrosshairMoveHandler);
     }
 }
 
@@ -1344,7 +1498,7 @@ function initOIChart() {
         bottomColor: 'rgba(59, 130, 246, 0.0)',
         lineColor: '#3b82f6',
         lineWidth: 2,
-        title: 'Open Interest'
+        title: 'OI'
     });
 
     // Resize Observer
@@ -1515,8 +1669,62 @@ function initATRChart() {
     atrResizeObserver.observe(atrContainer);
 }
 
+// Initialize CVD chart pane
+function initCVDChart() {
+    if (cvdChart) {
+        try { cvdChart.remove(); } catch (e) {}
+        cvdChart = null;
+    }
+    const cvdContainer = document.getElementById('cvd-chart');
+    if (!cvdContainer) return;
+    cvdContainer.innerHTML = '';
+
+    // Add pane label
+    const label = document.createElement('div');
+    label.className = 'indicator-pane-label';
+    label.innerHTML = `CVD (TICK RULE) <span id="cvd-legend" style="margin-left: 10px; font-weight: 500; font-family: monospace; font-size: 11px; text-transform: none;"></span>`;
+    cvdContainer.appendChild(label);
+
+    cvdChart = LightweightCharts.createChart(cvdContainer, {
+        ...getIndicatorChartOptions(),
+        rightPriceScale: {
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            scaleMargins: { top: 0.1, bottom: 0.1 },
+            minimumWidth: 90,
+        }
+    });
+
+    cvdSeries = cvdChart.addCandlestickSeries({
+        upColor: '#00e676',
+        downColor: '#ff1744',
+        borderVisible: false,
+        wickUpColor: '#00e676',
+        wickDownColor: '#ff1744',
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: true
+    });
+
+    // Create 0 reference line (Dashed white line with axis label, like TradingView)
+    cvdSeries.createPriceLine({
+        price: 0,
+        color: 'rgba(255, 255, 255, 0.45)',
+        lineWidth: 1,
+        lineStyle: (window.LightweightCharts && window.LightweightCharts.LineStyle) ? window.LightweightCharts.LineStyle.Dashed : 2,
+        axisLabelVisible: true,
+        title: '0'
+    });
+
+    const cvdResizeObserver = new ResizeObserver(() => {
+        if (cvdChart) {
+            cvdChart.resize(cvdContainer.getBoundingClientRect().width, cvdContainer.getBoundingClientRect().height);
+        }
+    });
+    cvdResizeObserver.observe(cvdContainer);
+}
+
 // Calculate and render all indicators
-function updateIndicators(data) {
+function updateIndicators(data, isLive = false) {
     if (!data || data.length === 0) return;
     
     // Update MAs
@@ -1524,12 +1732,14 @@ function updateIndicators(data) {
         const ma = maSeriesMap[key];
         const [type, periodStr] = key.split('_');
         const period = parseInt(periodStr);
-        const values = type === 'SMA' ? calcSMA(data, period) : calcEMA(data, period);
-        ma.series.setData(values);
+        if (!isLive) {
+            const values = type === 'SMA' ? calcSMA(data, period) : calcEMA(data, period);
+            ma.series.setData(values);
+        }
     });
     
     // Update RSI
-    if (rsiSeries) {
+    if (!isLive && rsiSeries && rsiChart && isChartVisible(rsiChart)) {
         const rsiData = calcRSI(data, 14);
         rsiSeries.setData(rsiData);
         
@@ -1543,9 +1753,21 @@ function updateIndicators(data) {
     }
     
     // Update ATR
-    if (atrSeries) {
+    if (!isLive && atrSeries && atrChart && isChartVisible(atrChart)) {
         const atrData = calcATR(data, 14);
         atrSeries.setData(atrData);
+    }
+
+    // Update CVD (Only call setData when NOT live tick, live ticks call cvdSeries.update incrementally!)
+    if (!isLive && cvdSeries && cvdChart) {
+        const cvdData = data.map(c => ({
+            time: c.time,
+            open: c.cvdOpen !== undefined ? c.cvdOpen : (c.cvd || 0),
+            high: c.cvdHigh !== undefined ? c.cvdHigh : (c.cvd || 0),
+            low: c.cvdLow !== undefined ? c.cvdLow : (c.cvd || 0),
+            close: c.cvdClose !== undefined ? c.cvdClose : (c.cvd || 0)
+        }));
+        cvdSeries.setData(cvdData);
     }
 }
 
@@ -1562,42 +1784,70 @@ function applyTimeframe(timeframeMinutes) {
     const intervalSeconds = timeframeMinutes * 60;
     const offsetSeconds = 19800; // 5.5 hours for IST
     
-    // 1. Pre-calculate 1-minute incremental volumes
-    const ticks1m = filteredHistory.map((c, i) => {
+    // 1. Pre-calculate 1-minute incremental volumes & TradingView CVD
+    const ticks1m = [];
+    filteredHistory.forEach((c, i) => {
         let diff = 0;
-        if (i > 0) {
-            const prevD = new Date(filteredHistory[i - 1].time * 1000);
-            const currD = new Date(c.time * 1000);
-            const isSameDay = prevD.getUTCFullYear() === currD.getUTCFullYear() &&
-                              prevD.getUTCMonth() === currD.getUTCMonth() &&
-                              prevD.getUTCDate() === currD.getUTCDate();
-            if (!isSameDay) {
-                // Day changed! Check if broker carried over yesterday's closing volume
-                const yesterdayVolume = filteredHistory[i - 1].volume;
-                if (c.volume >= yesterdayVolume) {
-                    diff = c.volume - yesterdayVolume;
-                } else {
-                    diff = c.volume;
-                }
+        // Skip volume for prefill (simulated) candles — they have fake cumulative volumes
+        if (c.prefill) {
+            diff = 0;
+        } else if (i > 0) {
+            const prev = filteredHistory[i - 1];
+            if (prev.prefill) {
+                // First real candle after prefill — use its cumulative volume as the day's starting trade count
+                diff = c.volume;
             } else {
-                diff = c.volume - filteredHistory[i - 1].volume;
-                if (diff < 0) {
-                    // Reset occurred during the day (delayed reset)
-                    diff = c.volume;
+                const prevDayKey = Math.floor((prev.time + 19800) / 86400);
+                const currDayKey = Math.floor((c.time + 19800) / 86400);
+                const isSameDay = prevDayKey === currDayKey;
+                if (!isSameDay) {
+                    // Day changed! Check if broker carried over yesterday's closing volume
+                    const yesterdayVolume = prev.volume;
+                    if (c.volume >= yesterdayVolume) {
+                        diff = c.volume - yesterdayVolume;
+                    } else {
+                        diff = c.volume;
+                    }
+                } else {
+                    diff = c.volume - prev.volume;
+                    if (diff < 0) {
+                        // Reset occurred during the day (delayed reset)
+                        diff = c.volume;
+                    }
                 }
             }
         } else {
             diff = c.volume;
         }
-        return {
+
+        const vol = diff >= 0 ? diff : 0;
+
+        let isSameDay = false;
+        if (i > 0) {
+            const prevDayKey = Math.floor((filteredHistory[i - 1].time + 19800) / 86400);
+            const currDayKey = Math.floor((c.time + 19800) / 86400);
+            isSameDay = prevDayKey === currDayKey;
+        }
+
+        const cvdClose = c.cvd !== undefined ? c.cvd : 0;
+        const cvdOpen = (i > 0 && isSameDay) ? ticks1m[i - 1].cvdClose : 0;
+        const cvdHigh = Math.max(cvdOpen, cvdClose);
+        const cvdLow = Math.min(cvdOpen, cvdClose);
+
+        ticks1m.push({
             time: Math.floor(c.time) + offsetSeconds,
             open: c.open,
             high: c.high,
             low: c.low,
             close: c.close,
             oi: c.oi || 0,
-            volume: diff >= 0 ? diff : 0
-        };
+            volume: vol,
+            cvd: cvdClose,
+            cvdOpen: cvdOpen,
+            cvdHigh: cvdHigh,
+            cvdLow: cvdLow,
+            cvdClose: cvdClose
+        });
     });
     
     // 2. Group into intervals
@@ -1611,25 +1861,89 @@ function applyTimeframe(timeframeMinutes) {
     });
     
     // 3. Aggregate each group
-    const aggregated = Object.keys(grouped).sort((a, b) => a - b).map(timeStr => {
+    const sortedKeys = Object.keys(grouped).sort((a, b) => a - b);
+    const aggregated = sortedKeys.map((timeStr, idx) => {
         const timeVal = parseInt(timeStr);
         const group = grouped[timeVal];
         
-        const openVal = group[0].open;
-        const closeVal = group[group.length - 1].close;
-        const highVal = Math.max(...group.map(t => t.high));
-        const lowVal = Math.min(...group.map(t => t.low));
-        const volumeVal = group.reduce((sum, t) => sum + t.volume, 0);
         const oiVal = group[group.length - 1].oi;
+        const cvdVal = group[group.length - 1].cvd;
+        
+        const cvdOpenVal = group[0].cvdOpen;
+        const cvdCloseVal = group[group.length - 1].cvdClose;
+        
+        let openVal = group[0].open;
+        let closeVal = group[group.length - 1].close;
+        let highVal = group[0].high;
+        let lowVal = group[0].low;
+        let cvdHighVal = Math.max(group[0].cvdHigh, group[0].cvdOpen, group[0].cvdClose);
+        let cvdLowVal = Math.min(group[0].cvdLow, group[0].cvdOpen, group[0].cvdClose);
+        let volumeVal = 0;
+        
+        let tradeOpen = null;
+        let tradeClose = null;
+        let tradeHigh = -Infinity;
+        let tradeLow = Infinity;
+        let hasTrades = false;
+
+        for (let j = 0; j < group.length; j++) {
+            const t = group[j];
+            volumeVal += t.volume;
+            if (t.high > highVal) highVal = t.high;
+            if (t.low < lowVal) lowVal = t.low;
+            const maxCvdT = Math.max(t.cvdHigh, t.cvdOpen, t.cvdClose);
+            const minCvdT = Math.min(t.cvdLow, t.cvdOpen, t.cvdClose);
+            if (maxCvdT > cvdHighVal) cvdHighVal = maxCvdT;
+            if (minCvdT < cvdLowVal) cvdLowVal = minCvdT;
+
+            if (t.volume > 0) {
+                if (!hasTrades) {
+                    tradeOpen = t.open;
+                    hasTrades = true;
+                }
+                tradeClose = t.close;
+                if (t.high > tradeHigh) tradeHigh = t.high;
+                if (t.low < tradeLow) tradeLow = t.low;
+            }
+        }
+        
+        let prevClose = group[0].open;
+        if (idx > 0) {
+            const prevKey = sortedKeys[idx - 1];
+            const prevGroup = grouped[parseInt(prevKey)];
+            prevClose = prevGroup[prevGroup.length - 1].close;
+        }
+        
+        if (hasTrades) {
+            openVal = tradeOpen;
+            closeVal = tradeClose;
+            highVal = tradeHigh;
+            lowVal = tradeLow;
+        } else {
+            const prevDayKey = idx > 0 ? Math.floor((parseInt(sortedKeys[idx - 1]) + 19800) / 86400) : null;
+            const currDayKey = Math.floor((timeVal + 19800) / 86400);
+            const isSameDay = prevDayKey === currDayKey;
+            if (isSameDay) {
+                openVal = prevClose;
+                closeVal = prevClose;
+                highVal = prevClose;
+                lowVal = prevClose;
+            }
+        }
         
         return {
             time: timeVal,
             open: openVal,
-            high: highVal,
-            low: lowVal,
+            high: Math.max(highVal, openVal),
+            low: Math.min(lowVal, openVal),
             close: closeVal,
             volume: volumeVal,
-            oi: oiVal
+            oi: oiVal,
+            cvd: cvdCloseVal,
+            cvdOpen: cvdOpenVal,
+            cvdHigh: cvdHighVal,
+            cvdLow: cvdLowVal,
+            cvdClose: cvdCloseVal
         };
     });
     
@@ -1668,11 +1982,30 @@ function applyTimeframe(timeframeMinutes) {
         activeMinuteTime = lastTick1m.time - (lastTick1m.time % intervalSeconds);
         
         const currentGroup = grouped[activeMinuteTime] || [lastTick1m];
-        activeMinuteOpen = currentGroup[0].open;
-        activeMinuteHigh = Math.max(...currentGroup.map(t => t.high));
-        activeMinuteLow = Math.min(...currentGroup.map(t => t.low));
+        const tradeTicks = currentGroup.filter(t => t.volume > 0);
+        if (tradeTicks.length > 0) {
+            activeMinuteOpen = tradeTicks[0].open;
+            activeMinuteHigh = Math.max(...tradeTicks.map(t => t.high));
+            activeMinuteLow = Math.min(...tradeTicks.map(t => t.low));
+        } else {
+            let prevClose = currentGroup[0].open;
+            const sortedGroupKeys = Object.keys(grouped).map(Number).sort((a,b)=>a-b);
+            const currentIdx = sortedGroupKeys.indexOf(activeMinuteTime);
+            if (currentIdx > 0) {
+                const prevKey = sortedGroupKeys[currentIdx - 1];
+                prevClose = grouped[prevKey][grouped[prevKey].length - 1].close;
+            }
+            activeMinuteOpen = prevClose;
+            activeMinuteHigh = prevClose;
+            activeMinuteLow = prevClose;
+        }
         activeMinuteClose = lastTick1m.close;
         activeMinuteVolume = currentGroup.reduce((sum, t) => sum + t.volume, 0);
+        
+        activeCvdOpen = currentGroup[0].cvdOpen;
+        activeCvdClose = currentGroup[currentGroup.length - 1].cvdClose;
+        activeCvdHigh = Math.max(...currentGroup.map(t => Math.max(t.cvdHigh, t.cvdOpen, t.cvdClose)));
+        activeCvdLow = Math.min(...currentGroup.map(t => Math.min(t.cvdLow, t.cvdOpen, t.cvdClose)));
         
         const firstActiveTickIndex = raw1mHistory.findIndex(c => (Math.floor(c.time) + offsetSeconds) >= activeMinuteTime);
         if (firstActiveTickIndex > 0) {
@@ -1788,6 +2121,9 @@ async function loadOIHistory(symbol) {
                         if (atrChart && isChartVisible(atrChart)) {
                             try { atrChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing ATR range in loadOIHistory:", e); }
                         }
+                        if (cvdChart && isChartVisible(cvdChart)) {
+                            try { cvdChart.timeScale().setVisibleLogicalRange(range); } catch(e) { console.error("Error syncing CVD range in loadOIHistory:", e); }
+                        }
                     }
                 }
             } catch (err) {
@@ -1817,7 +2153,7 @@ function connectWebSocket() {
     
     socket = new WebSocket(wsUrl);
     
-    socket.onopen = () => {
+    socket.onopen = async () => {
         connectionBadge.className = "badge badge-connected";
         connectionBadge.innerHTML = '<i class="fa-solid fa-circle-dot"></i> WS CONNECTED';
         console.log("WebSocket connected");
@@ -1828,6 +2164,18 @@ function connectWebSocket() {
                 action: "change_symbol",
                 symbol: currentSymbol
             }));
+        }
+
+        // Fetch history to fill any gaps during WebSocket disconnect/downtime
+        if (!isInitialWsConnect) {
+            console.log("WebSocket reconnected: reloading historical data to fill gaps...");
+            try {
+                await loadOIHistory(currentSymbol);
+            } catch (err) {
+                console.error("Error reloading history on WS reconnect:", err);
+            }
+        } else {
+            isInitialWsConnect = false;
         }
     };
     
@@ -1860,6 +2208,9 @@ function handleLiveTick(tick) {
         updateUIPanels(tick);
         updateCurveHistoryTodayRow(tick);
         
+        // If history is currently being fetched/rendered for a new symbol, ignore live tick chart updates to avoid race conditions and glitches
+        if (isSyncingSuspended) return;
+        
         if (!isMarketHours(tick.time)) {
             // Ignore ticks for chart rendering if they occur outside market hours
             return;
@@ -1881,10 +2232,26 @@ function handleLiveTick(tick) {
                     value: tick.oi
                 });
             }
+            if (cvdSeries && cvdChart && isChartVisible(cvdChart) && activeMinuteTime !== null) {
+                if (activeCvdClose !== null) {
+                    cvdSeries.update({
+                        time: activeMinuteTime,
+                        open: activeCvdOpen !== null ? activeCvdOpen : activeCvdClose,
+                        high: activeCvdHigh !== null ? activeCvdHigh : activeCvdClose,
+                        low: activeCvdLow !== null ? activeCvdLow : activeCvdClose,
+                        close: activeCvdClose
+                    });
+                }
+            }
             
             let dataPoint = currentHistoryData.find(d => d.time === activeMinuteTime);
             if (dataPoint) {
                 dataPoint.oi = tick.oi;
+                dataPoint.cvd = activeCvdClose;
+                dataPoint.cvdOpen = activeCvdOpen;
+                dataPoint.cvdHigh = activeCvdHigh;
+                dataPoint.cvdLow = activeCvdLow;
+                dataPoint.cvdClose = activeCvdClose;
             }
             
             if (!isCrosshairActive) {
@@ -1898,8 +2265,12 @@ function handleLiveTick(tick) {
         
         const offsetSeconds = 19800; // 5.5 hours for IST
         const intervalSeconds = currentTimeframe * 60;
-        const timeVal = Math.floor(tick.time) - (Math.floor(tick.time) % intervalSeconds) + offsetSeconds;
+        // Must match applyTimeframe: offset first, then floor to interval boundary
+        const shifted = Math.floor(tick.time) + offsetSeconds;
+        const timeVal = shifted - (shifted % intervalSeconds);
         
+
+
         // Update raw1mHistory memory cache
         const tickMinEpoch = Math.floor(tick.time) - (Math.floor(tick.time) % 60);
         let rawMinCandle = raw1mHistory.find(c => c.time === tickMinEpoch);
@@ -1909,7 +2280,17 @@ function handleLiveTick(tick) {
             rawMinCandle.close = tick.price;
             rawMinCandle.volume = tick.volume;
             rawMinCandle.oi = tick.oi;
+            
+            const liveCvd = tick.cvd !== undefined ? tick.cvd : rawMinCandle.cvdClose;
+            rawMinCandle.cvdClose = liveCvd;
+            rawMinCandle.cvd = liveCvd;
+            rawMinCandle.cvdHigh = Math.max(rawMinCandle.cvdHigh, liveCvd);
+            rawMinCandle.cvdLow = Math.min(rawMinCandle.cvdLow, liveCvd);
         } else {
+            const prevCandle = raw1mHistory.length > 0 ? raw1mHistory[raw1mHistory.length - 1] : null;
+            const isSameD = prevCandle ? isSameDayIST(tick.time, prevCandle.time) : false;
+            const cvdOpen = (isSameD && prevCandle) ? (prevCandle.cvdClose !== undefined ? prevCandle.cvdClose : (prevCandle.cvd || 0)) : 0;
+            const cvdClose = tick.cvd !== undefined ? tick.cvd : cvdOpen;
             raw1mHistory.push({
                 time: tickMinEpoch,
                 open: tick.price,
@@ -1917,7 +2298,12 @@ function handleLiveTick(tick) {
                 low: tick.price,
                 close: tick.price,
                 volume: tick.volume,
-                oi: tick.oi
+                oi: tick.oi,
+                cvd: cvdClose,
+                cvdOpen: cvdOpen,
+                cvdHigh: Math.max(cvdOpen, cvdClose),
+                cvdLow: Math.min(cvdOpen, cvdClose),
+                cvdClose: cvdClose
             });
         }
 
@@ -1936,14 +2322,38 @@ function handleLiveTick(tick) {
             activeMinuteLow = tick.price;
             activeMinuteClose = tick.price;
             
+            const prevCandle = raw1mHistory.length > 1 ? raw1mHistory[raw1mHistory.length - 2] : null;
+            const isSameD = prevCandle ? isSameDayIST(tick.time, prevCandle.time) : false;
+            activeCvdOpen = isSameD ? (activeCvdClose !== null ? activeCvdClose : 0) : 0;
+            
+            const liveCvd = tick.cvd !== undefined ? tick.cvd : activeCvdOpen;
+            activeCvdClose = liveCvd;
+            activeCvdHigh = Math.max(activeCvdOpen, liveCvd);
+            activeCvdLow = Math.min(activeCvdOpen, liveCvd);
+            
             let diff = tick.volume - activeMinuteVolumeStart;
             if (diff < 0) diff = tick.volume;
             activeMinuteVolume = diff;
         } else {
             // Inside the same interval
-            activeMinuteHigh = Math.max(activeMinuteHigh, tick.price);
-            activeMinuteLow = Math.min(activeMinuteLow, tick.price);
+            // If the interval has only processed placeholders (volume was 0), overwrite placeholder wicks with the first real trade price
+            const wasPlaceholder = activeMinuteVolume === 0;
+            if (wasPlaceholder) {
+                activeMinuteOpen = tick.price;
+                activeMinuteHigh = tick.price;
+                activeMinuteLow = tick.price;
+            } else {
+                activeMinuteHigh = Math.max(activeMinuteHigh, tick.price);
+                activeMinuteLow = Math.min(activeMinuteLow, tick.price);
+            }
             activeMinuteClose = tick.price;
+            
+            const liveCvd = tick.cvd !== undefined ? tick.cvd : (activeCvdClose !== null ? activeCvdClose : 0);
+            activeCvdClose = liveCvd;
+            if (activeCvdOpen === null) activeCvdOpen = liveCvd;
+            activeCvdHigh = Math.max(activeCvdHigh !== null ? activeCvdHigh : liveCvd, liveCvd, activeCvdOpen);
+            activeCvdLow = Math.min(activeCvdLow !== null ? activeCvdLow : liveCvd, liveCvd, activeCvdOpen);
+
             if (activeMinuteVolumeStart !== null) {
                 let diff = tick.volume - activeMinuteVolumeStart;
                 if (diff < 0) {
@@ -1985,11 +2395,22 @@ function handleLiveTick(tick) {
                 value: tick.oi
             });
         }
+        
+        // Update CVD Candlestick Series
+        if (cvdSeries && cvdChart && isChartVisible(cvdChart)) {
+            cvdSeries.update({
+                time: activeMinuteTime,
+                open: activeCvdOpen,
+                high: activeCvdHigh,
+                low: activeCvdLow,
+                close: activeCvdClose
+            });
+        }
  
         // Store current values
         lastOITick = tick.oi;
         lastPriceTick = tick.price;
-
+ 
         // Update currentHistoryData cache for legend lookup
         let dataPoint = currentHistoryData.find(d => d.time === activeMinuteTime);
         if (dataPoint) {
@@ -1999,6 +2420,11 @@ function handleLiveTick(tick) {
             dataPoint.close = activeMinuteClose;
             dataPoint.volume = activeMinuteVolume;
             dataPoint.oi = tick.oi;
+            dataPoint.cvd = activeCvdClose;
+            dataPoint.cvdOpen = activeCvdOpen;
+            dataPoint.cvdHigh = activeCvdHigh;
+            dataPoint.cvdLow = activeCvdLow;
+            dataPoint.cvdClose = activeCvdClose;
         } else {
             currentHistoryData.push({
                 time: activeMinuteTime,
@@ -2007,10 +2433,15 @@ function handleLiveTick(tick) {
                 low: activeMinuteLow,
                 close: activeMinuteClose,
                 volume: activeMinuteVolume,
-                oi: tick.oi
+                oi: tick.oi,
+                cvd: activeCvdClose,
+                cvdOpen: activeCvdOpen,
+                cvdHigh: activeCvdHigh,
+                cvdLow: activeCvdLow,
+                cvdClose: activeCvdClose
             });
         }
-
+ 
         // Update indicators with live data
         updateIndicators(currentHistoryData);
 
@@ -2162,6 +2593,12 @@ function formatNumber(num) {
     return (isNegative ? "-" : "") + formatted;
 }
 
+function formatSignedNum(val) {
+    if (val === null || val === undefined || isNaN(val)) return "0";
+    const rounded = Math.round(val);
+    return rounded > 0 ? `+${formatNumber(rounded)}` : `${formatNumber(rounded)}`;
+}
+
 // Update Legend element texts
 function updateLegendValues(param) {
     if (!param || !param.time) return;
@@ -2197,6 +2634,29 @@ function updateLegendValues(param) {
             document.getElementById("legend-oi").innerText = oi.value !== undefined ? oi.value : "-";
         }
     }
+
+    const cvdLegend = document.getElementById("cvd-legend");
+    if (cvdLegend) {
+        let o, h, l, c;
+        if (dataPoint && dataPoint.cvdOpen !== undefined) {
+            o = dataPoint.cvdOpen;
+            h = dataPoint.cvdHigh;
+            l = dataPoint.cvdLow;
+            c = dataPoint.cvdClose;
+        } else if (param.seriesData && cvdSeries && param.seriesData.get(cvdSeries)) {
+            const cd = param.seriesData.get(cvdSeries);
+            if (cd && cd.open !== undefined) {
+                o = cd.open;
+                h = cd.high;
+                l = cd.low;
+                c = cd.close;
+            }
+        }
+        if (o !== undefined && c !== undefined) {
+            const color = c >= o ? '#00e676' : '#ff1744';
+            cvdLegend.innerHTML = `O: <span style="color:${color}">${formatSignedNum(o)}</span> H: <span style="color:${color}">${formatSignedNum(h)}</span> L: <span style="color:${color}">${formatSignedNum(l)}</span> C: <span style="color:${color}">${formatSignedNum(c)}</span>`;
+        }
+    }
 }
 
 function clearLegendValues() {
@@ -2208,6 +2668,16 @@ function clearLegendValues() {
         document.getElementById("legend-close").innerText = lastCandle.close !== undefined ? lastCandle.close.toFixed(2) : "-";
         document.getElementById("legend-volume").innerText = lastCandle.volume !== undefined ? lastCandle.volume : "0";
         document.getElementById("legend-oi").innerText = lastCandle.oi !== undefined ? lastCandle.oi : "-";
+
+        const cvdLegend = document.getElementById("cvd-legend");
+        if (cvdLegend && lastCandle && lastCandle.cvdOpen !== undefined) {
+            const o = lastCandle.cvdOpen;
+            const h = lastCandle.cvdHigh;
+            const l = lastCandle.cvdLow;
+            const c = lastCandle.cvdClose;
+            const color = c >= o ? '#00e676' : '#ff1744';
+            cvdLegend.innerHTML = `O: <span style="color:${color}">${formatSignedNum(o)}</span> H: <span style="color:${color}">${formatSignedNum(h)}</span> L: <span style="color:${color}">${formatSignedNum(l)}</span> C: <span style="color:${color}">${formatSignedNum(c)}</span>`;
+        }
     } else {
         document.getElementById("legend-open").innerText = "-";
         document.getElementById("legend-high").innerText = "-";
@@ -2215,6 +2685,9 @@ function clearLegendValues() {
         document.getElementById("legend-close").innerText = "-";
         document.getElementById("legend-volume").innerText = "-";
         document.getElementById("legend-oi").innerText = "-";
+
+        const cvdLegend = document.getElementById("cvd-legend");
+        if (cvdLegend) cvdLegend.innerHTML = "";
     }
 }
 
@@ -2257,7 +2730,7 @@ async function loadCommodityCurveHistory(symbol) {
                 
                 // Contracts
                 contracts.forEach((c, idx) => {
-                    const cData = day.contracts[c] || { close: null, change: null, oi: null };
+                    const cData = day.contracts[c] || { close: null, change: null, oi: null, oi_change: null };
                     
                     const tdClose = document.createElement("td");
                     
@@ -2280,22 +2753,43 @@ async function loadCommodityCurveHistory(symbol) {
                     // Cache yesterday's close on today's row cells for real-time updates
                     if (day === history[0]) {
                         const nextDay = history[1];
-                        const yestCloseVal = nextDay && nextDay.contracts[c] ? nextDay.contracts[c].close : null;
+                        const yestCloseVal = cData.yesterday_close !== undefined && cData.yesterday_close !== null
+                            ? cData.yesterday_close
+                            : (nextDay && nextDay.contracts[c] ? nextDay.contracts[c].close : null);
                         if (yestCloseVal !== null) {
                             tdClose.setAttribute("data-yest-close", yestCloseVal);
                         }
                     }
                     
                     const tdOi = document.createElement("td");
-                    tdOi.innerText = cData.oi !== null ? formatNumber(cData.oi) : "-";
+                    // Store absolute OI in attribute for Total OI calculation
+                    if (cData.oi !== null) {
+                        tdOi.setAttribute("data-abs-oi", cData.oi);
+                    }
                     
-                    // Add color coding for OI column
-                    if (idx === 0) {
-                        tdOi.style.color = "var(--color-ce)";
-                    } else if (idx === 1) {
-                        tdOi.style.color = "var(--color-pe)";
+                    // Display OI change instead of absolute OI
+                    if (cData.oi_change !== null) {
+                        const sign = cData.oi_change > 0 ? "+" : "";
+                        tdOi.innerText = `${sign}${formatNumber(cData.oi_change)}`;
+                        if (cData.oi_change > 0) {
+                            tdOi.className = "text-positive";
+                        } else if (cData.oi_change < 0) {
+                            tdOi.className = "text-negative";
+                        } else {
+                            tdOi.style.color = "#d1d5db";
+                        }
                     } else {
+                        tdOi.innerText = "-";
                         tdOi.style.color = "#d1d5db";
+                    }
+                    
+                    // Cache yesterday's OI on today's row cells for real-time updates
+                    if (day === history[0]) {
+                        const nextDay = history[1];
+                        const yestOiVal = nextDay && nextDay.contracts[c] ? nextDay.contracts[c].oi : null;
+                        if (yestOiVal !== null) {
+                            tdOi.setAttribute("data-yest-oi", yestOiVal);
+                        }
                     }
                     
                     tr.appendChild(tdClose);
@@ -2378,14 +2872,39 @@ function updateCurveHistoryTodayRow(tick) {
         closeCell.style.color = "#d1d5db";
     }
     
-    firstRow.cells[oiCellIdx].innerText = formatNumber(tick.oi);
+    const oiCell = firstRow.cells[oiCellIdx];
+    oiCell.setAttribute("data-abs-oi", tick.oi);
+    
+    const yestOiAttr = oiCell.getAttribute("data-yest-oi");
+    const yestOi = yestOiAttr ? parseInt(yestOiAttr) : null;
+    
+    if (yestOi !== null) {
+        const oiChange = tick.oi - yestOi;
+        const sign = oiChange > 0 ? "+" : "";
+        oiCell.innerText = `${sign}${formatNumber(oiChange)}`;
+        
+        oiCell.classList.remove("text-positive", "text-negative");
+        oiCell.style.color = "";
+        
+        if (oiChange > 0) {
+            oiCell.classList.add("text-positive");
+        } else if (oiChange < 0) {
+            oiCell.classList.add("text-negative");
+        } else {
+            oiCell.style.color = "#d1d5db";
+        }
+    } else {
+        oiCell.innerText = "-";
+        oiCell.style.color = "#d1d5db";
+    }
     
     // Recalculate Total OI for today's row
     let totalOi = 0;
     for (let i = 0; i < 3; i++) {
-        const oiValStr = firstRow.cells[2 + i * 2].innerText.replace(/,/g, '');
-        const oiVal = parseInt(oiValStr) || 0;
-        totalOi += oiVal;
+        const cell = firstRow.cells[2 + i * 2];
+        const absOiAttr = cell.getAttribute("data-abs-oi");
+        const absOi = absOiAttr ? parseInt(absOiAttr) : 0;
+        totalOi += absOi;
     }
     firstRow.cells[7].innerText = formatNumber(totalOi);
 }

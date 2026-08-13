@@ -447,12 +447,21 @@ class AngelConnector:
             }
             self.market_data[token] = dash_tick
             
-            # Save EOD tick to database (to sync history chart and curve table)
             try:
-                from backend.database import save_tick
-                save_tick(symbol, token, ltp, oi, volume)
+                from backend.database import get_db_connection, get_cursor, get_placeholder
+                # Only read the last known CVD from DB for display — do NOT write or mutate CVD state
+                # REST quotes use tradeVolume (lots) which differs from WebSocket volume (qty),
+                # so calling get_or_calculate_cvd here corrupts the running CVD state.
+                conn = get_db_connection()
+                cursor = get_cursor(conn)
+                p = get_placeholder()
+                cursor.execute(f"SELECT cvd FROM ticks WHERE token = {p} ORDER BY timestamp DESC LIMIT 1", (token,))
+                row = cursor.fetchone()
+                dash_tick["cvd"] = float(row["cvd"]) if row else 0.0
+                cursor.close()
+                conn.close()
             except Exception as db_err:
-                print(f"AngelConnector: Error saving EOD tick from quote: {db_err}")
+                dash_tick["cvd"] = 0.0
                 
             return dash_tick
         return None
@@ -465,21 +474,24 @@ class AngelConnector:
         if not fetch_and_cache_scrip_master():
             return {}
             
-        print("AngelConnector: Resolving all NCDEX contract tokens...")
+        print("AngelConnector: Resolving all NCDEX+MCX contract tokens...")
         
         # Build lookup criteria
         # For each symbol, we split it into commodity name, month, and year
+        SEGMENT_TO_EXCHANGE = {"5": "MCX", "7": "NCDEX"}
         targets = {}
-        for sym_name in self.settings.get("futures_symbols", {}):
+        for sym_name, sym_info in self.settings.get("futures_symbols", {}).items():
             parts = sym_name.split()
             if len(parts) >= 2:
                 commodity = parts[0]
                 month = parts[1][:3].upper()
                 year = parts[2][-2:]
+                segment = sym_info.get("segment", "7")
                 targets[sym_name] = {
                     "commodity": commodity,
                     "suffix1": f"{month}{year}",
-                    "suffix2": f"{month}20{year}"
+                    "suffix2": f"{month}20{year}",
+                    "exchange": SEGMENT_TO_EXCHANGE.get(segment, "NCDEX")
                 }
                 
         symbol_token_map = {}
@@ -493,17 +505,20 @@ class AngelConnector:
                 
             # Scan scrip master in a single pass
             for item in scrip_master:
-                if item.get("exch_seg") == "NCDEX" and item.get("instrumenttype") == "FUTCOM":
-                    name = item.get("name")
-                    sym = item.get("symbol", "")
-                    for sym_name, criteria in targets.items():
-                        if name == criteria["commodity"]:
-                            s1 = criteria["suffix1"]
-                            s2 = criteria["suffix2"]
-                            if sym.endswith(s1) or s1 in sym or sym.endswith(s2) or s2 in sym:
-                                symbol_token_map[sym_name] = item.get("token")
+                item_exch = item.get("exch_seg", "")
+                item_type = item.get("instrumenttype", "")
+                if item_type not in ("FUTCOM", "FUTBLN"):
+                    continue
+                name = item.get("name")
+                sym = item.get("symbol", "")
+                for sym_name, criteria in targets.items():
+                    if name == criteria["commodity"] and item_exch == criteria["exchange"]:
+                        s1 = criteria["suffix1"]
+                        s2 = criteria["suffix2"]
+                        if sym.endswith(s1) or s1 in sym or sym.endswith(s2) or s2 in sym:
+                            symbol_token_map[sym_name] = item.get("token")
                                 
-            print(f"AngelConnector: Successfully resolved {len(symbol_token_map)} NCDEX tokens.")
+            print(f"AngelConnector: Successfully resolved {len(symbol_token_map)} NCDEX+MCX tokens.")
         except Exception as e:
             try:
                 size = os.path.getsize(INSTRUMENT_MASTER_PATH)
@@ -513,6 +528,134 @@ class AngelConnector:
             
         self.symbol_token_map = symbol_token_map
         return symbol_token_map
+
+    def auto_discover_contracts(self):
+        """
+        Scans the Angel One scrip master for all NCDEX/MCX futures contracts matching
+        tracked commodities and auto-adds any new ones to futures_symbols in config.
+        Runs on startup so new contracts appear in the dropdown automatically.
+        """
+        import re
+        if not fetch_and_cache_scrip_master():
+            print("AngelConnector: auto_discover_contracts — scrip master not available, skipping.")
+            return
+
+        # Commodities we track (keys from futures_symbols) with their exchange segment
+        tracked_commodities = {}  # commodity_code -> segment
+        for sym_name, sym_info in self.settings.get("futures_symbols", {}).items():
+            parts = sym_name.split()
+            if parts:
+                code = parts[0]
+                if code not in tracked_commodities:
+                    tracked_commodities[code] = sym_info.get("segment", "7")
+
+        if not tracked_commodities:
+            print("AngelConnector: auto_discover_contracts — no tracked commodities found, skipping.")
+            return
+        
+        SEGMENT_TO_EXCHANGE = {"5": "MCX", "7": "NCDEX"}
+
+        # TradingView symbol templates per commodity (from existing config)
+        # Build a map: commodity_code -> tv_symbol_template
+        tv_templates = {}
+        for sym_name, info in self.settings.get("futures_symbols", {}).items():
+            code = sym_name.split()[0]
+            tv = info.get("tv_symbol", "")
+            if tv and code not in tv_templates:
+                tv_templates[code] = tv
+
+        # Month abbreviation mapping for display names
+        MONTH_ABBR = {
+            "JAN": "JAN", "FEB": "FEB", "MAR": "MAR", "APR": "APR",
+            "MAY": "MAY", "JUN": "JUN", "JUL": "JUL", "AUG": "AUG",
+            "SEP": "SEP", "OCT": "OCT", "NOV": "NOV", "DEC": "DEC"
+        }
+
+        # TradingView month letter codes for DHANIYA-style individual month symbols
+        TV_MONTH_LETTERS = {
+            "JAN": "F", "FEB": "G", "MAR": "H", "APR": "J", "MAY": "K", "JUN": "M",
+            "JUL": "N", "AUG": "Q", "SEP": "U", "OCT": "V", "NOV": "X", "DEC": "Z"
+        }
+
+        try:
+            with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
+                scrip_master = json.load(f)
+        except Exception as e:
+            print(f"AngelConnector: auto_discover_contracts — error reading scrip master: {e}")
+            return
+
+        existing_tokens = {
+            info.get("token", "") for info in self.settings.get("futures_symbols", {}).values()
+        }
+
+        new_count = 0
+        for item in scrip_master:
+            item_exch = item.get("exch_seg", "")
+            item_type = item.get("instrumenttype", "")
+            if item_type not in ("FUTCOM", "FUTBLN"):
+                continue
+
+            commodity = item.get("name", "")
+            if commodity not in tracked_commodities:
+                continue
+            
+            # Verify exchange matches the commodity's segment
+            expected_exch = SEGMENT_TO_EXCHANGE.get(tracked_commodities[commodity], "NCDEX")
+            if item_exch != expected_exch:
+                continue
+
+            token = item.get("symbol", "")  # e.g. "DHANIYA20AUG2026"
+            if not token or token in existing_tokens:
+                continue
+
+            # Parse expiry from token to build display name: "DHANIYA AUG 26"
+            m = re.search(r'(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{4})$', token.upper())
+            if not m:
+                continue
+
+            day, month_str, year_str = m.group(1), m.group(2), m.group(3)
+            year_short = year_str[-2:]  # "2026" -> "26"
+            display_name = f"{commodity} {month_str} {year_short}"  # e.g. "DHANIYA AUG 26"
+
+            if display_name in self.settings.get("futures_symbols", {}):
+                continue
+
+            # Build TradingView symbol
+            tv_template = tv_templates.get(commodity, "")
+            exch_prefix = "MCX" if tracked_commodities.get(commodity) == "5" else "NCDEX"
+            if tv_template and tv_template.endswith("1!"):
+                # Continuous contract style — reuse the same template
+                tv_symbol = tv_template
+            elif tv_template:
+                # Individual month symbol (like DHANIYA): NCDEX:{commodity}{month_letter}{year}
+                month_letter = TV_MONTH_LETTERS.get(month_str, "")
+                tv_symbol = f"{exch_prefix}:{commodity}{month_letter}{year_str}"
+            else:
+                tv_symbol = f"{exch_prefix}:{commodity}1!"
+
+            # Add to futures_symbols
+            if "futures_symbols" not in self.settings:
+                self.settings["futures_symbols"] = {}
+
+            self.settings["futures_symbols"][display_name] = {
+                "token": token,
+                "segment": tracked_commodities.get(commodity, "7"),
+                "tv_symbol": tv_symbol
+            }
+            existing_tokens.add(token)
+            new_count += 1
+            print(f"AngelConnector: Auto-discovered new contract: {display_name} (token: {token})")
+
+        if new_count > 0:
+            # Save updated config
+            try:
+                with open("backend/config.json", "w") as f:
+                    json.dump(self.settings, f, indent=2)
+                print(f"AngelConnector: Auto-discovery complete — added {new_count} new contract(s) and saved config.")
+            except Exception as e:
+                print(f"AngelConnector: Error saving config after auto-discovery: {e}")
+        else:
+            print("AngelConnector: Auto-discovery complete — no new contracts found.")
 
     def start(self, broadcast_callback):
         self.running = True
@@ -634,22 +777,34 @@ class AngelConnector:
                         active_resolved = resolve_angel_token(self.settings["active_symbol"])
                         all_tokens = [active_resolved] if active_resolved else [self.settings["active_token"]]
                     
+                    # Group tokens by exchange segment for subscription
+                    ncdex_tokens = []
+                    mcx_tokens = []
+                    for sym_name, tok in token_map.items():
+                        seg = self.settings.get("futures_symbols", {}).get(sym_name, {}).get("segment", "7")
+                        if seg == "5":
+                            mcx_tokens.append(tok)
+                        else:
+                            ncdex_tokens.append(tok)
+                    
+                    # Build token list for subscription
+                    token_list = []
+                    if ncdex_tokens:
+                        token_list.append({"exchangeType": 7, "tokens": ncdex_tokens})
+                    if mcx_tokens:
+                        token_list.append({"exchangeType": 5, "tokens": mcx_tokens})
+                    
                     # Subscribe to all tokens in SNAP_QUOTE (mode=3)
                     sub_payload = {
                         "correlationID": "sub-all-oi-1",
                         "action": 1,
                         "params": {
                             "mode": 3,
-                            "tokenList": [
-                                {
-                                    "exchangeType": 7, # NCDEX
-                                    "tokens": all_tokens
-                                }
-                            ]
+                            "tokenList": token_list
                         }
                     }
                     await ws.send(json.dumps(sub_payload))
-                    print(f"AngelConnector: Subscribed to {len(all_tokens)} NCDEX tokens in SNAP_QUOTE mode")
+                    print(f"AngelConnector: Subscribed to {len(ncdex_tokens)} NCDEX + {len(mcx_tokens)} MCX tokens in SNAP_QUOTE mode")
                     
                     # Spawn heartbeat ping task
                     ping_task = asyncio.create_task(self._heartbeat(ws))
@@ -684,6 +839,9 @@ class AngelConnector:
                                             break
                                             
                                     if match_symbol:
+                                        from backend.database import get_or_calculate_cvd, save_tick
+                                        cvd = get_or_calculate_cvd(tick_token, tick["ltp"], tick["volume"])
+                                        
                                         # If this tick matches the active contract, update UI panels
                                         target_symbol = self.settings["active_symbol"]
                                         if match_symbol == target_symbol:
@@ -698,6 +856,7 @@ class AngelConnector:
                                                 "change": round(tick["ltp"] - tick["close"], 2),
                                                 "volume": tick["volume"],
                                                 "oi": tick["oi"],
+                                                "cvd": cvd,
                                                 "time": int(time.time()),
                                                 "ohlc": {
                                                     "open": tick["open"],
@@ -712,8 +871,7 @@ class AngelConnector:
 
                                         # Forward to database (runs instantly via queue)
                                         try:
-                                            from backend.database import save_tick
-                                            save_tick(match_symbol, tick_token, tick["ltp"], tick["oi"], tick["volume"])
+                                            save_tick(match_symbol, tick_token, tick["ltp"], tick["oi"], tick["volume"], cvd)
                                         except Exception as db_err:
                                             print(f"AngelConnector: DB write error: {db_err}")
                                 else:
@@ -745,17 +903,17 @@ def fetch_and_cache_scrip_master():
         if os.path.exists(INSTRUMENT_MASTER_PATH):
             size = os.path.getsize(INSTRUMENT_MASTER_PATH)
             if size > 2 * 1024 * 1024:
-                print(f"AngelConnector: Found large raw scrip master ({size} bytes). Filtering to NCDEX only...")
+                print(f"AngelConnector: Found large raw scrip master ({size} bytes). Filtering to NCDEX+MCX futures only...")
                 try:
                     with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
                         full_master = json.load(f)
                     filtered_master = [
                         item for item in full_master
-                        if item.get("exch_seg") == "NCDEX"
+                        if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("instrumenttype") in ("FUTCOM", "FUTBLN")
                     ]
                     with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
                         json.dump(filtered_master, f, indent=2)
-                    print(f"AngelConnector: Successfully filtered existing master to {len(filtered_master)} NCDEX instruments.")
+                    print(f"AngelConnector: Successfully filtered existing master to {len(filtered_master)} NCDEX+MCX instruments.")
                 except Exception as e:
                     print(f"AngelConnector: Error filtering existing master: {e}")
 
@@ -771,11 +929,11 @@ def fetch_and_cache_scrip_master():
             full_master = r.json()
             filtered_master = [
                 item for item in full_master
-                if item.get("exch_seg") == "NCDEX"
+                if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("instrumenttype") in ("FUTCOM", "FUTBLN")
             ]
             with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
                 json.dump(filtered_master, f, indent=2)
-            print(f"AngelConnector: Downloaded and saved filtered scrip master ({len(filtered_master)} NCDEX instruments)")
+            print(f"AngelConnector: Downloaded and saved filtered scrip master ({len(filtered_master)} NCDEX+MCX instruments)")
             return True
     except Exception as e:
         print(f"AngelConnector: Failed to update scrip master: {e}")

@@ -17,9 +17,12 @@ Project OI for dhaniya/
 │   ├── oi_history.db           # Local SQLite database (fallback for storage)
 │   └── angel_instruments.json  # ⚠️ LARGE FILE (35MB). DO NOT SEARCH OR OPEN.
 ├── frontend/
-│   ├── index.html              # HTML Dashboard (layouts, forms, KPIs, chart placeholders)
+│   ├── index.html              # HTML Dashboard (layouts, forms, KPIs, chart placeholders, PWA elements)
 │   ├── app.js                  # Frontend app logic (Lightweight Charts v4, hover legends, websockets)
-│   └── app.css                 # Glassmorphic dark theme CSS styling
+│   ├── app.css                 # Glassmorphic dark theme CSS styling
+│   ├── manifest.json           # PWA manifest file for app installability
+│   ├── sw.js                   # Service worker for static asset caching
+│   └── icon-512.png            # PWA home screen app icon
 ├── requirements.txt            # Python dependencies (fastapi, uvicorn, websockets, psycopg2-binary)
 ├── run.bat                     # Windows startup script for local running
 └── project_resource_map.md     # This file (Agent Developer Guide)
@@ -70,17 +73,77 @@ NCDEX sessions run Monday-Friday, starting at **10:00 AM IST**. If there is miss
 *   `backend/main.py` fetches the last recorded tick of the previous day to use as today's starting OI and yesterday's close price baseline.
 *   It generates 1-minute pre-fill candles with random illiquid noise to bridge the gap up to the first live logged tick.
 *   Calculates the daily **Change in OI** using the opening OI baseline (recorded or manual setting override).
+*   **Prefill candles include `"prefill": True`** in their dict so the frontend can distinguish them from real exchange data.
+
+### 3. Volume Bar Calculation Pipeline
+Volume in the database is **cumulative** (total contracts traded since market open). The frontend converts this to **per-candle incremental volume** for chart rendering. The pipeline is:
+
+1.  **Backend** (`database.py` `save_tick`): Stores raw cumulative volume from Angel One as-is.
+2.  **Backend** (`database.py` `get_history`): Returns 1-minute OHLCV candles aggregated from raw ticks. Volume uses `max()` (correct for cumulative — latest tick has highest value).
+3.  **Backend** (`main.py` `get_unified_history`): Merges `past_ticks + prefill_candles + session_ticks`. Prefill candles have `"prefill": True`.
+4.  **Frontend** (`app.js` `applyTimeframe`):
+    *   Filters for market hours, then maps each 1-min candle to incremental volume via `diff = current.volume - previous.volume`.
+    *   **Prefill candles** (`c.prefill === true`): Volume diff is forced to `0` — they have fake cumulative values.
+    *   **First real candle after prefill** (`prev.prefill === true`): Uses `c.volume` as-is (represents total contracts traded since market open).
+    *   **Day boundary**: If the day changes, handles broker volume carry-over vs reset.
+    *   **Negative diff** (volume reset mid-day): Treats the candle's cumulative value as the full incremental volume.
+5.  **Frontend** (`app.js` `handleLiveTick`): For live WebSocket ticks, the same incremental logic applies using `activeMinuteVolumeStart` as baseline.
+
+> [!IMPORTANT]
+> **Volume is cumulative in the DB, incremental on the chart.** If volume bars ever look wrong, check the diff logic in `applyTimeframe()` (~line 1565) first. The `prefill` flag boundary is the most common source of spurious spikes.
+
+### 4. Live Tick Time Alignment
+The time bucket formula for grouping candles into timeframe intervals (5m, 15m, 1h, etc.) **must be identical** in both `applyTimeframe()` (historical) and `handleLiveTick()` (live):
+
+```javascript
+// Correct formula (offset FIRST, then floor to interval boundary):
+const shifted = Math.floor(epochSeconds) + 19800;  // shift UTC → IST
+const timeVal = shifted - (shifted % intervalSeconds);  // floor to interval
+```
+
+> [!CAUTION]
+> **Do NOT use**: `floor(time) - (floor(time) % interval) + offset`. This produces different buckets when `offset % interval ≠ 0` (e.g., on 1-hour timeframe: `19800 % 3600 = 1800`). The mismatch causes live candles to land in different buckets than historical candles, creating visual timestamp shifts.
 
 ### 3. Dynamic Legend Mapping
 *   `frontend/app.js` caches all current chart ticks inside a `currentHistoryData` list.
 *   On **crosshair hover**, the exact OHLC, Volume, and Open Interest values are resolved from this cache and mapped to `#legend-open`, `#legend-high`, `#legend-low`, `#legend-close`, `#legend-volume`, and `#legend-oi`.
 *   When the cursor leaves the chart, the legend defaults to the **latest live candle's values**.
 
-### 4. Active Contract Switching & Reconnection
+### 5. Active Contract Switching & Reconnection
 *   Changing contracts is done via dropdown value selection on the client. It sends a WebSocket message `change_symbol` to update backend in-memory settings (written to `config.json`).
 *   **No WS Restart Needed**: The connector remains active, filtering and broadcasting ticks dynamically.
 *   **Reconnection Sync**: On WebSocket `onopen`, the client sends the currently selected symbol to backend to ensure they stay synced.
+*   **History Reload on Reconnect**: When the WebSocket reconnects (not initial connect), the frontend automatically calls `loadOIHistory(currentSymbol)` to fill any data gaps that occurred during the disconnection. Controlled by the `isInitialWsConnect` flag in `app.js`.
 *   **Chart Cleanups**: Price and OI charts must be disposed of via `chart.remove()` prior to recreating instances to avoid zombie logical range handlers.
+
+### 6. Dynamic Contract Dropdown (Auto-Discovery & Expiry Filtering)
+The contract dropdown is fully dynamic — no manual config edits needed when contracts expire or new ones are listed.
+
+#### Expiry Filtering (Backend → Frontend)
+*   **`/api/ncdex-contracts`** endpoint in `main.py` parses the expiry date embedded in each contract's Angel One token string (e.g., `DHANIYA19JUN2026` → June 19, 2026) using `_parse_expiry_from_token()`.
+*   Contracts whose expiry date has passed are **automatically excluded** from the API response.
+*   Optional query param `?include_expired=true` available for historical viewing.
+*   Frontend `populateContractsDropdown()` in `app.js` handles the case where the active symbol was filtered out — it automatically selects the first available contract.
+
+#### Auto-Discovery of New Contracts (Startup)
+*   **`auto_discover_contracts()`** method in `angel_connector.py` runs once on service startup (called in `main.py` `startup_event`).
+*   Scans the Angel One scrip master (`angel_instruments.json`, refreshed daily) for all `NCDEX FUTCOM` instruments matching tracked commodity codes (extracted from existing `futures_symbols` keys).
+*   For each new contract found, it:
+    1. Parses the expiry date from the token to build a display name (e.g., `DHANIYA20FEB2027` → `DHANIYA FEB 27`).
+    2. Generates the TradingView symbol using the existing template for that commodity (continuous `1!` style or individual month letter style).
+    3. Adds the entry to `futures_symbols` in config and saves `config.json`.
+*   **Memory impact**: Negligible — runs once, loads the already-filtered scrip master (~87 instruments), then frees all local variables.
+*   **Tracked commodities** are inferred from existing `futures_symbols` keys: `DHANIYA`, `GUARGUM5`, `JEERAMINI`, `JEERAUNJHA`, `TMCFGRNZM`.
+
+> [!TIP]
+> To add a completely new commodity to tracking, manually add one contract for it in `config.json` under `futures_symbols`. On next restart, `auto_discover_contracts()` will pick up all other listed contracts for that commodity automatically.
+
+### 7. Chart Synchronization Guards
+Multiple charts (Price, OI, RSI, ATR) share a synchronized timescale. Key guards:
+*   **`isSyncingSuspended`**: Set to `true` during history load / timeframe change. Reset in a `finally` block inside `setTimeout`. **Must always be reset** — if an exception prevents the `finally`, sync breaks permanently.
+*   **`isSyncingRange`**: Mutual exclusion guard to prevent recursive `setVisibleLogicalRange()` update loops between charts.
+*   **`isChartVisible(chart)`**: Before calling `setVisibleLogicalRange()` on any chart, check visibility. Hidden charts (`display:none`) throw exceptions on range calls.
+*   When toggling RSI/ATR indicators, call `.resize()` on **all visible charts** to recalculate flex layout.
 
 ---
 
@@ -141,3 +204,35 @@ NCDEX sessions run Monday-Friday, starting at **10:00 AM IST**. If there is miss
 * **Port**: Bound to `127.0.0.1:8000` (localhost only).
 * **Execution User**: Runs as `opc` user for security.
 * **Database Ownership**: The database `/home/opc/Project-OI-for-dhaniya/backend/oi_history.db` must belong to the `opc:opc` user. If owned by `root`, SQLite writes will fail, causing the service to lock up in an infinite database connection retry loop.
+
+### 5. SSH Key Path & Quick Deploy Commands
+* **SSH Key**: `c:\Users\hp\Documents\ORACLE keys\ssh-key-2026-06-12.key`
+* **SSH command pattern**: `ssh -o StrictHostKeyChecking=no -i "c:\Users\hp\Documents\ORACLE keys\ssh-key-2026-06-12.key" opc@80.225.245.57 "<command>"`
+* **SCP deploy pattern**: `scp -o StrictHostKeyChecking=no -i "c:\Users\hp\Documents\ORACLE keys\ssh-key-2026-06-12.key" <local_file> opc@80.225.245.57:<remote_path>`
+* **Quick deploy & restart**:
+  1. Copy changed files: `scp ... backend/main.py opc@80.225.245.57:/home/opc/Project-OI-for-dhaniya/backend/main.py`
+  2. Copy frontend: `scp ... frontend/app.js opc@80.225.245.57:/home/opc/Project-OI-for-dhaniya/frontend/app.js`
+  3. Restart: `ssh ... "sudo systemctl restart ncdex"`
+  4. Verify: `ssh ... "sudo systemctl status ncdex --no-pager"`
+* **View live logs**: `ssh ... "sudo journalctl -u ncdex -f --no-pager"`
+* **Run DB queries**: Write a `.py` script locally, `scp` it to `/tmp/` on the VM, then `ssh ... "python3 /tmp/script.py"`. The VM does **not** have `psycopg2` — use `sqlite3` module directly against `/home/opc/Project-OI-for-dhaniya/backend/oi_history.db`.
+
+> [!WARNING]
+> **PowerShell quoting**: The local shell is PowerShell on Windows. Inline Python one-liners with quotes/brackets break due to PS parsing. Always write a `.py` file and `scp` + `ssh` execute it instead of trying inline `-c` commands.
+
+---
+
+## 📋 Known Issues & Past Fixes Log
+
+| Date | Issue | Root Cause | Fix Applied |
+|------|-------|------------|-------------|
+| 2026-06-17 | Chart sync breaks after toggling indicators | `isSyncingSuspended` locked permanently because `setVisibleLogicalRange()` on hidden charts threw unhandled exceptions | Wrapped all `setVisibleLogicalRange()` in `try-catch` with `finally` to guarantee `isSyncingSuspended = false`. Added `isChartVisible()` guard. |
+| 2026-06-24 | Volume bars differ from TradingView | Prefill candles had fake cumulative volumes polluting the diff calculation; live tick `timeVal` formula misaligned with historical aggregation | Backend: added `"prefill": True` flag to prefill candles. Frontend: zeroed prefill volume in `applyTimeframe()`, fixed `timeVal` formula to offset-first-then-modulo. |
+| 2026-06-24 | Chart data gap after WebSocket disconnection | Frontend did not reload historical data on WS reconnect, leaving gaps in `raw1mHistory` | Added `isInitialWsConnect` flag in `app.js`. On reconnect (not first connect), `loadOIHistory()` is called automatically to backfill gaps. |
+| 2026-06-25 | Expired contracts (JUN 26) still shown in dropdown | Contract dropdown was static — populated from `futures_symbols` in `config.json` with no expiry filtering | Added `_parse_expiry_from_token()` in `main.py` to parse expiry dates from Angel One tokens. `/api/ncdex-contracts` now filters out expired contracts by default. Updated `active_symbol` from expired `DHANIYA JUN 26` to `DHANIYA AUG 26`. |
+| 2026-06-25 | New NCDEX contracts not auto-added to dropdown | No mechanism to discover newly listed contracts from Angel One scrip master | Added `auto_discover_contracts()` in `angel_connector.py`. Runs on startup, scans scrip master for new FUTCOM contracts matching tracked commodities, auto-adds to `futures_symbols` and saves config. |
+| 2026-06-27 | Fake chart data on NCDEX holidays (e.g., Muharram June 26) | `is_market_hours()`, `get_last_market_minute()`, and `get_unified_history()` only checked weekends, not exchange holidays. Stale REST quotes got written to DB on holidays. | Added `NCDEX_HOLIDAYS_2026` set and `is_ncdex_holiday()` to `database.py`. Updated all three functions to skip holidays. Cleaned 20 bogus ticks from DB. |
+| 2026-07-07 | Intraday highs/lows missing from chart candles | `_db_writer_worker` heartbeat path (no-trade ticks) only updated `close` — never touched `high`/`low`. Price spikes arriving in heartbeat ticks were lost. | Updated heartbeat UPDATE in `database.py` to always compute `max(high, price)` and `min(low, price)`. |
+| 2026-07-07 | Candle colors differ from TradingView (green vs red) | Frontend used first-tick-of-interval as candle open, while TradingView uses previous candle's close. Causes color mismatch in illiquid markets. | `applyTimeframe()` and `handleLiveTick()` now set each candle's open = previous candle's close (intraday only). |
+| 2026-07-08 | OI summary table showed expired JUN 26 contracts | `get_commodity_curve_history()` included all `futures_symbols` without filtering expired contracts. | Added `_parse_expiry_from_token()` filtering (same as dropdown) and `is_ncdex_holiday()` for weekday list. |
+| 2026-07-08 | Mobile app support (PWA) | Terminal only usable on desktop browsers. | Added `manifest.json`, `sw.js` (service worker), app icon, Apple meta tags. Terminal is now installable on Android/iOS as a standalone app. |
