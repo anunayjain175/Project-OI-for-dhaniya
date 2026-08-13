@@ -403,7 +403,10 @@ class AngelConnector:
         # Check if we already have data (from WSS or EOD override)
         m_data = self.market_data.get(token) or self.settings.get("eod_override", {}).get(token)
         if m_data and self.connected:
-            return m_data
+            ohlc = m_data.get("ohlc", {})
+            if isinstance(ohlc, dict) and ohlc.get("high", 0.0) > ohlc.get("low", 0.0):
+                return m_data
+
 
         # Only fetch if we are in live mode and credentials exist
         if self.settings.get("mode") != "live":
@@ -856,6 +859,21 @@ class AngelConnector:
                                         if match_symbol == target_symbol:
                                             # if tick_count % 5 == 1:
                                             #     print(f"AngelConnector WSS: Active tick match: ltp={tick['ltp']} volume={tick['volume']} oi={tick['oi']}")
+                                            prev_m = self.market_data.get(tick_token) or self.baselines.get(tick_token)
+                                            tick_high = tick["high"]
+                                            tick_low = tick["low"]
+                                            tick_open = tick["open"]
+                                            
+                                            if prev_m:
+                                                prev_ohlc = prev_m.get("ohlc") if (isinstance(prev_m, dict) and "ohlc" in prev_m) else prev_m
+                                                if isinstance(prev_ohlc, dict):
+                                                    if tick_high <= tick_low or tick_high == tick["ltp"] or tick_low == tick["ltp"]:
+                                                        tick_high = max(prev_ohlc.get("high", 0.0), tick["ltp"])
+                                                        tick_low = min(prev_ohlc.get("low", 9999999.0), tick["ltp"])
+                                                        if tick_low == 9999999.0 or tick_low <= 0.0:
+                                                            tick_low = tick["ltp"]
+                                                        tick_open = prev_ohlc.get("open") or tick["open"] or tick["ltp"]
+
                                             yest_close = tick["close"] - (tick["ltp"] * (tick["oi_change_pct"] / 100.0) if tick["oi_change_pct"] else 0.0)
                                             dash_tick = {
                                                 "token": tick_token,
@@ -868,14 +886,15 @@ class AngelConnector:
                                                 "cvd": cvd,
                                                 "time": int(time.time()),
                                                 "ohlc": {
-                                                    "open": tick["open"],
-                                                    "high": tick["high"],
-                                                    "low": tick["low"],
+                                                    "open": tick_open,
+                                                    "high": tick_high,
+                                                    "low": tick_low,
                                                     "close": tick["ltp"],
                                                     "yesterday_close": tick["close"]
                                                 }
                                             }
                                             self.market_data[tick_token] = dash_tick
+
                                             self.broadcast_callback(dash_tick)
 
                                         # Forward to database (runs instantly via queue)

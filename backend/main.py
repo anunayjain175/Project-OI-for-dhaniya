@@ -440,7 +440,15 @@ def get_unified_history(symbol: str, connector):
         fallback_price = 12000.0
         fallback_oi = 10000
         fallback_vol = 100
-        if "JEERA" in symbol:
+        if "GOLD" in symbol.upper():
+            fallback_price = 154000.0
+            fallback_oi = 1260000
+            fallback_vol = 7000
+        elif "SILVER" in symbol.upper():
+            fallback_price = 153000.0
+            fallback_oi = 300000
+            fallback_vol = 8000
+        elif "JEERA" in symbol:
             fallback_price = 28000.0
             fallback_oi = 3000
         elif "TMC" in symbol or "TURMERIC" in symbol or "HALDI" in symbol:
@@ -452,6 +460,7 @@ def get_unified_history(symbol: str, connector):
         elif "SEED" in symbol:
             fallback_price = 5350.0
             fallback_oi = 68000
+
             
         baseline = {
             "price": fallback_price,
@@ -739,8 +748,14 @@ def get_futures_data(symbol: str = None):
         else:
             # Try to query a live REST quote to populate the connector's memory cache
             m_data = connector.market_data.get(token)
+            if m_data:
+                ohlc = m_data.get("ohlc", {})
+                if isinstance(ohlc, dict) and ohlc.get("high", 0.0) <= ohlc.get("low", 0.0):
+                    m_data = None
+                    
             if not m_data and hasattr(connector, "update_market_data_from_quote"):
                 try:
+
                     m_data = connector.update_market_data_from_quote(symbol, token)
                 except Exception as e:
                     print(f"Error querying REST quote in endpoint: {e}")
