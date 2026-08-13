@@ -151,8 +151,8 @@ def is_ncdex_holiday(dt_or_epoch) -> bool:
 def is_market_hours(epoch: int, is_mcx: bool = False) -> bool:
     """
     Returns True if the epoch timestamp (in IST) is within market hours:
-    NCDEX: Mon-Fri 10:00 AM to 5:00 PM IST.
-    MCX: Mon-Fri 9:00 AM to 11:30 PM IST.
+    NCDEX: Mon-Fri 10:00 AM to 5:00 PM IST (inclusive of 17:00 closing minute).
+    MCX: Mon-Fri 9:00 AM to 11:30 PM IST (inclusive of 23:30 closing minute).
     """
     from datetime import datetime, timezone, timedelta, time
     IST = timezone(timedelta(hours=5, minutes=30))
@@ -169,15 +169,15 @@ def is_market_hours(epoch: int, is_mcx: bool = False) -> bool:
     t = dt.time()
     if is_mcx:
         start_time = time(9, 0, 0)
-        end_time = time(23, 30, 0)
+        end_time = time(23, 30, 59)
     else:
         start_time = time(10, 0, 0)
-        end_time = time(17, 0, 0) # Strictly before 5:00 PM IST
+        end_time = time(17, 0, 59) # Inclusive of 5:00 PM IST closing minute
     
-    return start_time <= t < end_time
+    return start_time <= t <= end_time
 
 
-def get_last_market_minute(epoch: int) -> int:
+def get_last_market_minute(epoch: int, is_mcx: bool = False) -> int:
     """
     Returns the nearest epoch timestamp (truncated to minute) that is within market hours and <= epoch.
     Skips weekends and NCDEX holidays.
@@ -186,17 +186,17 @@ def get_last_market_minute(epoch: int) -> int:
     IST = timezone(timedelta(hours=5, minutes=30))
     dt = datetime.fromtimestamp(epoch, tz=IST)
     
-    # Rewind to 16:59 of the most recent valid trading day
+    close_h = 23 if is_mcx else 17
+    close_m = 30 if is_mcx else 0
+    open_h = 9 if is_mcx else 10
+    
     def _rewind_to_prev_trading_day(d):
-        """Move backwards from d to find the last valid trading day, return it set to 16:59."""
         candidate = d
-        # If currently after market close or on a non-trading day, start from today/yesterday
-        for _ in range(10):  # Max 10 days back (covers long weekends + holidays)
+        for _ in range(10):
             if candidate.weekday() <= 4 and not is_ncdex_holiday(candidate):
-                return candidate.replace(hour=16, minute=59, second=0, microsecond=0)
+                return candidate.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
             candidate -= timedelta(days=1)
-        # Fallback: just use the original date
-        return d.replace(hour=16, minute=59, second=0, microsecond=0)
+        return d.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
 
     # Weekend
     if dt.weekday() > 4:
@@ -207,15 +207,16 @@ def get_last_market_minute(epoch: int) -> int:
         return int(_rewind_to_prev_trading_day(dt - timedelta(days=1)).timestamp())
     
     # Weekday before market open
-    if dt.hour < 10:
+    if dt.hour < open_h:
         return int(_rewind_to_prev_trading_day(dt - timedelta(days=1)).timestamp())
         
     # Weekday after market close
-    if dt.hour >= 17:
-        dt = dt.replace(hour=16, minute=59, second=0, microsecond=0)
+    if (dt.hour > close_h) or (dt.hour == close_h and dt.minute > close_m):
+        dt = dt.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
         return int(dt.timestamp())
             
     return epoch - (epoch % 60)
+
 
 
 db_write_queue = queue.Queue()
@@ -464,8 +465,9 @@ def save_tick(symbol: str, token: str, price: float, open_interest: int, volume:
         db_write_queue.put((symbol, token, price, open_interest, volume, cvd, now))
     else:
         # Route after-hours ticks to the final EOD timestamp of the active session
-        eod_ts = get_last_market_minute(now)
+        eod_ts = get_last_market_minute(now, is_mcx=is_mcx)
         if cvd is None:
+
             cvd = get_or_calculate_cvd(token, price, volume, eod_ts)
         db_write_queue.put((symbol, token, price, open_interest, volume, cvd, eod_ts))
 
