@@ -18,6 +18,8 @@ ENV/
 
 # SQLite database (ephemeral - recreated on startup)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # Scratch / dev-only test scripts

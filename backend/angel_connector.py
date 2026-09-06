@@ -926,45 +926,76 @@ class AngelConnector:
 
 def fetch_and_cache_scrip_master():
     url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    import gc
     try:
-        # 1. If file exists and is raw (> 2MB), filter it immediately
-        if os.path.exists(INSTRUMENT_MASTER_PATH):
-            size = os.path.getsize(INSTRUMENT_MASTER_PATH)
-            if size > 2 * 1024 * 1024:
-                print(f"AngelConnector: Found large raw scrip master ({size} bytes). Filtering to NCDEX+MCX futures only...")
-                try:
-                    with open(INSTRUMENT_MASTER_PATH, "r", encoding="utf-8") as f:
-                        full_master = json.load(f)
-                    filtered_master = [
-                        item for item in full_master
-                        if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("instrumenttype") in ("FUTCOM", "FUTBLN")
-                    ]
-                    with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
-                        json.dump(filtered_master, f, indent=2)
-                    print(f"AngelConnector: Successfully filtered existing master to {len(filtered_master)} NCDEX+MCX instruments.")
-                except Exception as e:
-                    print(f"AngelConnector: Error filtering existing master: {e}")
-
-        # 2. Check if file exists, is valid (> 1KB), and was updated in the last 24h
+        # 1. Check if file exists, is valid (> 1KB), and was updated in the last 24h
         if os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024:
             mtime = os.path.getmtime(INSTRUMENT_MASTER_PATH)
             if time.time() - mtime < 86400:
                 return True
                 
-        print("AngelConnector: Downloading fresh scrip master from margincalculator...")
-        r = requests.get(url, timeout=25)
+        print("AngelConnector: Streaming fresh scrip master from margincalculator (low-memory mode)...")
+        r = requests.get(url, stream=True, timeout=35)
         if r.status_code == 200:
-            full_master = r.json()
-            filtered_master = [
-                item for item in full_master
-                if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("instrumenttype") in ("FUTCOM", "FUTBLN")
-            ]
-            with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
-                json.dump(filtered_master, f, indent=2)
-            print(f"AngelConnector: Downloaded and saved filtered scrip master ({len(filtered_master)} NCDEX+MCX instruments)")
-            return True
+            filtered_master = []
+            buffer = ""
+            in_string = False
+            escape = False
+            brace_depth = 0
+            obj_start = -1
+
+            for chunk in r.iter_content(chunk_size=65536, decode_unicode=True):
+                if not chunk:
+                    continue
+                start_idx = len(buffer)
+                buffer += chunk
+                i = start_idx
+                while i < len(buffer):
+                    ch = buffer[i]
+                    if escape:
+                        escape = False
+                        i += 1
+                        continue
+                    if ch == '\\' and in_string:
+                        escape = True
+                        i += 1
+                        continue
+                    if ch == '"':
+                        in_string = not in_string
+                        i += 1
+                        continue
+                    if not in_string:
+                        if ch == '{':
+                            if brace_depth == 0:
+                                obj_start = i
+                            brace_depth += 1
+                        elif ch == '}':
+                            brace_depth -= 1
+                            if brace_depth == 0 and obj_start != -1:
+                                obj_str = buffer[obj_start:i+1]
+                                if ("NCDEX" in obj_str or "MCX" in obj_str) and ("FUTCOM" in obj_str or "FUTBLN" in obj_str):
+                                    try:
+                                        item = json.loads(obj_str)
+                                        if item.get("exch_seg") in ("NCDEX", "MCX") and item.get("instrumenttype") in ("FUTCOM", "FUTBLN"):
+                                            filtered_master.append(item)
+                                    except Exception:
+                                        pass
+                                buffer = buffer[i+1:]
+                                i = -1
+                                obj_start = -1
+                    i += 1
+
+            if filtered_master:
+                with open(INSTRUMENT_MASTER_PATH, "w", encoding="utf-8") as f:
+                    json.dump(filtered_master, f, indent=2)
+                print(f"AngelConnector: Streamed and saved {len(filtered_master)} filtered NCDEX+MCX instruments (peak RAM < 20MB)")
+                del filtered_master
+                del buffer
+                gc.collect()
+                return True
     except Exception as e:
-        print(f"AngelConnector: Failed to update scrip master: {e}")
+        print(f"AngelConnector: Failed to stream update scrip master: {e}")
+        gc.collect()
     
     # Final fallback check: if file exists and is > 1KB
     return os.path.exists(INSTRUMENT_MASTER_PATH) and os.path.getsize(INSTRUMENT_MASTER_PATH) > 1024

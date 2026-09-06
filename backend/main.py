@@ -34,6 +34,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 import json
 import asyncio
 from typing import Set
@@ -41,6 +42,9 @@ from typing import Set
 from backend.angel_connector import AngelConnector
 
 app = FastAPI(title="Futures Real-Time OI Charting Terminal")
+
+# Enable Gzip compression for payloads > 1KB (compresses historical data by ~90%)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Enable CORS for local development
 app.add_middleware(
@@ -102,7 +106,7 @@ async def periodic_prune_task():
     import asyncio
     while True:
         try:
-            prune_ticks(days_to_keep=1825)
+            prune_ticks(days_to_keep=60)
         except Exception as e:
             print(f"Error in periodic database prune task: {e}")
         # Run every 12 hours

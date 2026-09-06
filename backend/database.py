@@ -21,8 +21,13 @@ def get_db_connection():
         conn = psycopg2.connect(conn_str)
         return conn
     else:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = -2000")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA busy_timeout = 15000")
         return conn
 
 def get_cursor(conn):
@@ -220,6 +225,7 @@ def get_last_market_minute(epoch: int, is_mcx: bool = False) -> int:
 
 
 db_write_queue = queue.Queue()
+_active_candle_cache = {}  # token -> {"minute": int, "id": int, "open": float, "high": float, "low": float, "close": float, "volume": int, "prev_volume": int, "prev_close": float}
 
 def _db_writer_worker():
     conn = None
@@ -232,8 +238,18 @@ def _db_writer_worker():
                 db_write_queue.task_done()
                 break
                 
-            symbol, token, price, open_interest, volume, cvd_value, now = item
-            
+            batch = [item]
+            # Batch drain up to 30 items if waiting in queue
+            while not db_write_queue.empty() and len(batch) < 30:
+                try:
+                    next_item = db_write_queue.get_nowait()
+                    if next_item is None:
+                        batch.append(None)
+                        break
+                    batch.append(next_item)
+                except queue.Empty:
+                    break
+
             # Ensure database connection is active
             if conn is None or (hasattr(conn, "closed") and conn.closed):
                 if conn:
@@ -246,106 +262,184 @@ def _db_writer_worker():
                 cursor = get_cursor(conn)
                 
             p = get_placeholder()
-            
-            # 1. Fetch the last recorded tick overall for this token PRIOR to the current minute (to get baseline volume/price)
-            current_minute = now - (now % 60)
-            query_prev = f"""
-                SELECT open, high, low, close, open_interest, volume, timestamp FROM ticks
-                WHERE token = {p} AND timestamp < {p}
-                ORDER BY timestamp DESC LIMIT 1
-            """
-            cursor.execute(query_prev, (token, current_minute))
-            prev_tick = cursor.fetchone()
-            
-            # Determine baseline volume for comparison (resets to 0 on a new calendar day in IST)
-            prev_volume = 0
-            if prev_tick:
-                prev_timestamp = prev_tick["timestamp"]
-                prev_day = (prev_timestamp + 19800) // 86400
-                curr_day = (now + 19800) // 86400
-                if prev_day == curr_day:
-                    prev_volume = prev_tick["volume"]
 
-            # 2. Check if we already have a tick for this token in the current minute
-            query_curr = f"""
-                SELECT id, open, high, low, close, open_interest, volume FROM ticks 
-                WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
-                ORDER BY timestamp DESC LIMIT 1
-            """
-            cursor.execute(query_curr, (token, current_minute, current_minute + 60))
-            curr_tick = cursor.fetchone()
-            
-            if curr_tick:
-                # We are updating the current minute's tick
-                if prev_tick and volume > prev_volume:
-                    # This is a trade tick!
-                    if curr_tick["volume"] == prev_volume:
-                        # This is the first trade of the minute! Overwrite the placeholder values.
-                        update_query = f"""
-                            UPDATE ticks SET 
-                                timestamp = {p},
-                                open = {p},
-                                high = {p},
-                                low = {p},
-                                close = {p},
-                                open_interest = {p},
-                                volume = {p},
-                                cvd = {p}
-                            WHERE id = {p}
-                        """
-                        cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, cvd_value, curr_tick["id"]))
+            for tick_item in batch:
+                if tick_item is None:
+                    db_write_queue.task_done()
+                    continue
+                symbol, token, price, open_interest, volume, cvd_value, now = tick_item
+                current_minute = now - (now % 60)
+
+                # Check in-memory active minute cache first
+                cached = _active_candle_cache.get(token)
+
+                if cached and cached["minute"] == current_minute:
+                    # FAST PATH: Already tracking this minute's candle in memory (0 SELECTs!)
+                    prev_volume = cached["prev_volume"]
+                    curr_tick_id = cached["id"]
+
+                    if volume > prev_volume:
+                        # Trade tick
+                        if cached["volume"] == prev_volume:
+                            # First trade of the minute, overwrite placeholder
+                            new_high = price
+                            new_low = price
+                            update_query = f"""
+                                UPDATE ticks SET 
+                                    timestamp = {p}, open = {p}, high = {p}, low = {p}, close = {p},
+                                    open_interest = {p}, volume = {p}, cvd = {p}
+                                WHERE id = {p}
+                            """
+                            cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, cvd_value, curr_tick_id))
+                            cached["open"] = price
+                        else:
+                            new_high = max(cached["high"], price)
+                            new_low = min(cached["low"], price)
+                            update_query = f"""
+                                UPDATE ticks SET 
+                                    timestamp = {p}, high = {p}, low = {p}, close = {p},
+                                    open_interest = {p}, volume = {p}, cvd = {p}
+                                WHERE id = {p}
+                            """
+                            cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_tick_id))
                     else:
-                        # Standard update within the same minute
-                        new_high = max(curr_tick["high"], price)
-                        new_low = min(curr_tick["low"], price)
+                        # Heartbeat / no-trade tick
+                        new_high = max(cached["high"], price)
+                        new_low = min(cached["low"], price)
                         update_query = f"""
                             UPDATE ticks SET 
-                                timestamp = {p},
-                                high = {p},
-                                low = {p},
-                                close = {p},
-                                open_interest = {p},
-                                volume = {p},
-                                cvd = {p}
+                                timestamp = {p}, high = {p}, low = {p}, close = {p},
+                                open_interest = {p}, volume = {p}, cvd = {p}
                             WHERE id = {p}
                         """
-                        cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_tick["id"]))
+                        cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_tick_id))
+
+                    cached["high"] = new_high
+                    cached["low"] = new_low
+                    cached["close"] = price
+                    cached["volume"] = volume
                 else:
-                    # Standard heartbeat/no-trade update: update close, high, low, OI, and volume
-                    new_high = max(curr_tick["high"], price)
-                    new_low = min(curr_tick["low"], price)
-                    update_query = f"""
-                        UPDATE ticks SET 
-                            timestamp = {p},
-                            high = {p},
-                            low = {p},
-                            close = {p},
-                            open_interest = {p},
-                            volume = {p},
-                            cvd = {p}
-                        WHERE id = {p}
+                    # SLOW PATH: Minute boundary roll-over or cache miss
+                    # 1. Fetch previous tick prior to current minute
+                    query_prev = f"""
+                        SELECT open, high, low, close, open_interest, volume, timestamp FROM ticks
+                        WHERE token = {p} AND timestamp < {p}
+                        ORDER BY timestamp DESC LIMIT 1
                     """
-                    cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_tick["id"]))
-            else:
-                # We are inserting a new minute tick
-                if prev_tick and volume <= prev_volume:
-                    # Insert a placeholder candle at the previous close price (no trades occurred yet)
-                    prev_close = prev_tick["close"]
-                    insert_query = f"""
-                        INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume, cvd)
-                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    cursor.execute(query_prev, (token, current_minute))
+                    prev_tick = cursor.fetchone()
+
+                    prev_volume = 0
+                    prev_close = price
+                    if prev_tick:
+                        prev_close = prev_tick["close"]
+                        prev_timestamp = prev_tick["timestamp"]
+                        prev_day = (prev_timestamp + 19800) // 86400
+                        curr_day = (now + 19800) // 86400
+                        if prev_day == curr_day:
+                            prev_volume = prev_tick["volume"]
+
+                    # 2. Check if a tick already exists for this current minute in DB
+                    query_curr = f"""
+                        SELECT id, open, high, low, close, open_interest, volume FROM ticks 
+                        WHERE token = {p} AND timestamp >= {p} AND timestamp < {p}
+                        ORDER BY timestamp DESC LIMIT 1
                     """
-                    cursor.execute(insert_query, (now, symbol, token, prev_close, prev_close, prev_close, prev_close, open_interest, prev_volume, cvd_value))
-                else:
-                    # Insert a new trading candle
-                    insert_query = f"""
-                        INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume, cvd)
-                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
-                    """
-                    cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume, cvd_value))
-                
+                    cursor.execute(query_curr, (token, current_minute, current_minute + 60))
+                    curr_tick = cursor.fetchone()
+
+                    if curr_tick:
+                        # Minute tick exists in DB: update it and seed cache
+                        curr_id = curr_tick["id"]
+                        if prev_tick and volume > prev_volume:
+                            if curr_tick["volume"] == prev_volume:
+                                new_high, new_low = price, price
+                                update_query = f"""
+                                    UPDATE ticks SET 
+                                        timestamp = {p}, open = {p}, high = {p}, low = {p}, close = {p},
+                                        open_interest = {p}, volume = {p}, cvd = {p}
+                                    WHERE id = {p}
+                                """
+                                cursor.execute(update_query, (now, price, price, price, price, open_interest, volume, cvd_value, curr_id))
+                                candle_open = price
+                            else:
+                                new_high = max(curr_tick["high"], price)
+                                new_low = min(curr_tick["low"], price)
+                                update_query = f"""
+                                    UPDATE ticks SET 
+                                        timestamp = {p}, high = {p}, low = {p}, close = {p},
+                                        open_interest = {p}, volume = {p}, cvd = {p}
+                                    WHERE id = {p}
+                                """
+                                cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_id))
+                                candle_open = curr_tick["open"]
+                        else:
+                            new_high = max(curr_tick["high"], price)
+                            new_low = min(curr_tick["low"], price)
+                            update_query = f"""
+                                UPDATE ticks SET 
+                                    timestamp = {p}, high = {p}, low = {p}, close = {p},
+                                    open_interest = {p}, volume = {p}, cvd = {p}
+                                WHERE id = {p}
+                            """
+                            cursor.execute(update_query, (now, new_high, new_low, price, open_interest, volume, cvd_value, curr_id))
+                            candle_open = curr_tick["open"]
+
+                        _active_candle_cache[token] = {
+                            "minute": current_minute,
+                            "id": curr_id,
+                            "open": candle_open,
+                            "high": new_high,
+                            "low": new_low,
+                            "close": price,
+                            "volume": volume,
+                            "prev_volume": prev_volume,
+                            "prev_close": prev_close
+                        }
+                    else:
+                        # Insert a new minute tick
+                        if prev_tick and volume <= prev_volume:
+                            # Placeholder candle at previous close
+                            insert_query = f"""
+                                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume, cvd)
+                                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                            """
+                            cursor.execute(insert_query, (now, symbol, token, prev_close, prev_close, prev_close, prev_close, open_interest, prev_volume, cvd_value))
+                            inserted_id = cursor.lastrowid
+                            _active_candle_cache[token] = {
+                                "minute": current_minute,
+                                "id": inserted_id,
+                                "open": prev_close,
+                                "high": prev_close,
+                                "low": prev_close,
+                                "close": prev_close,
+                                "volume": prev_volume,
+                                "prev_volume": prev_volume,
+                                "prev_close": prev_close
+                            }
+                        else:
+                            # New trading candle
+                            insert_query = f"""
+                                INSERT INTO ticks (timestamp, symbol, token, open, high, low, close, open_interest, volume, cvd)
+                                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                            """
+                            cursor.execute(insert_query, (now, symbol, token, price, price, price, price, open_interest, volume, cvd_value))
+                            inserted_id = cursor.lastrowid
+                            _active_candle_cache[token] = {
+                                "minute": current_minute,
+                                "id": inserted_id,
+                                "open": price,
+                                "high": price,
+                                "low": price,
+                                "close": price,
+                                "volume": volume,
+                                "prev_volume": prev_volume,
+                                "prev_close": prev_close
+                            }
+
+                db_write_queue.task_done()
+
             conn.commit()
-            db_write_queue.task_done()
             
         except Exception as e:
             print(f"Database Worker Error: {e}")
@@ -560,7 +654,7 @@ def get_history(symbol: str, interval_minutes: int = 1, start_timestamp: int = N
     # Sort chronologically
     return sorted(candles.values(), key=lambda x: x["time"])
 
-def prune_ticks(days_to_keep: int = 1825):
+def prune_ticks(days_to_keep: int = 60):
     """Deletes ticks older than the specified number of days to prevent database bloat."""
     conn = get_db_connection()
     cursor = get_cursor(conn)
@@ -573,6 +667,12 @@ def prune_ticks(days_to_keep: int = 1825):
         cursor.execute(query, (cutoff_timestamp,))
         conn.commit()
         print(f"Database: Pruned ticks older than {days_to_keep} days (before epoch {cutoff_timestamp}).")
+        if not is_postgres():
+            try:
+                cursor.execute("PRAGMA incremental_vacuum(1000)")
+                conn.commit()
+            except Exception:
+                pass
     except Exception as e:
         print(f"Database: Error pruning ticks: {e}")
     finally:
